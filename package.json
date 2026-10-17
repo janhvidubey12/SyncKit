@@ -31,5 +31,8 @@
   },
   "devDependencies": {
     "socket.io-client": "^4.8.4"
+  },
+  "engines": {
+    "node": ">=22.5.0"
   }
 }
