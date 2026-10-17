@@ -79,6 +79,7 @@ async function testLiveCursorSharing() {
 
   // Wait until presence in MAIN_ROOM reaches 3
   await new Promise((resolve) => {
+    if (bob.getPresence().length === 3) return resolve();
     bob.onPresenceChange((users) => {
       if (users.length === 3) resolve();
     });

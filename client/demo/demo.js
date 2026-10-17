@@ -1,7 +1,7 @@
 // client/demo/demo.js
 // SyncKit - Real-Time Collaborative Workspace
-// Black and Red Theme with Shared Multi-Member Room Notes
-// Demonstrates genuine real-time multiplayer synchronization using the clean SyncKit API.
+// Collaborative Whiteboard, Wide Room Notes with Permissions, Live Ephemeral Reactions,
+// Persistent Database Storage, and Real-Time Cursors.
 
 document.addEventListener('DOMContentLoaded', () => {
   // ==========================================
@@ -23,6 +23,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const recoveryBanner = document.getElementById('recovery-banner');
   const recoveryVersionText = document.getElementById('recovery-version-text');
   const dismissRecoveryBtn = document.getElementById('dismiss-recovery-btn');
+  const roomErrorBanner = document.getElementById('room-error-banner');
+  const roomErrorMessage = document.getElementById('room-error-message');
+  const dismissRoomErrorBtn = document.getElementById('dismiss-room-error-btn');
+  let roomErrorTimeout = null;
 
   // Room Join & Navigation
   const roomInput = document.getElementById('room-input');
@@ -40,38 +44,15 @@ document.addEventListener('DOMContentLoaded', () => {
   const cancelCreateNoteBtn = document.getElementById('cancel-create-note-btn');
   const newNoteTitle = document.getElementById('new-note-title');
   const newNoteContent = document.getElementById('new-note-content');
+  const newNotePermission = document.getElementById('new-note-permission');
   const cancelNoteBtn = document.getElementById('cancel-note-btn');
   const saveNoteBtn = document.getElementById('save-note-btn');
   const notesCardsList = document.getElementById('notes-cards-list');
   const notesEmptyState = document.getElementById('notes-empty-state');
   const notesCountBadge = document.getElementById('notes-count-badge');
   const textSyncIndicator = document.getElementById('text-sync-indicator');
-  const newNoteEditable = document.getElementById('new-note-editable');
 
-  // Navigation Tabs (Notes vs Discussions)
-  const tabBtnNotes = document.getElementById('tab-btn-notes');
-  const tabBtnDiscussions = document.getElementById('tab-btn-discussions');
-  const notesTabContent = document.getElementById('notes-tab-content');
-  const discussionsTabContent = document.getElementById('discussions-tab-content');
-
-  // Stored Room Discussions Elements (SQLite Database)
-  const discussionsFeedList = document.getElementById('discussions-feed-list');
-  const discussionsEmptyState = document.getElementById('discussions-empty-state');
-  const discussionsCountBadge = document.getElementById('discussions-count-badge');
-  const discussionRoomBadge = document.getElementById('discussion-room-badge');
-  const discussionInput = document.getElementById('discussion-input');
-  const sendDiscussionBtn = document.getElementById('send-discussion-btn');
-
-  // Collaborative Whiteboard Elements (Pen & Eraser)
-  const whiteboardCanvas = document.getElementById('whiteboard-canvas');
-  const canvasViewport = document.getElementById('canvas-viewport');
-  const wbToolPen = document.getElementById('wb-tool-pen');
-  const wbToolEraser = document.getElementById('wb-tool-eraser');
-  const wbClearBtn = document.getElementById('wb-clear-btn');
-  const wbColorDots = document.querySelectorAll('.wb-color-dot');
-  const wbSizeBtns = document.querySelectorAll('.wb-size-btn');
-
-  // Legacy elements preserved for test compatibility
+  // Legacy elements preserved for backward compatibility
   const sharedTextArea = document.getElementById('shared-text-area');
   const sharedTextInput = document.getElementById('shared-text-input');
   const updateTextBtn = document.getElementById('update-text-btn');
@@ -84,19 +65,28 @@ document.addEventListener('DOMContentLoaded', () => {
   const presenceCount = document.getElementById('presence-count');
   const presenceList = document.getElementById('presence-list');
 
-  // Collaboration Board & Cursors
+  // Collaborative Whiteboard Elements (Feature 3)
   const collabBoard = document.getElementById('collab-board');
+  const whiteboardCanvas = document.getElementById('whiteboard-canvas');
+  const toolPenBtn = document.getElementById('tool-pen');
+  const toolEraserBtn = document.getElementById('tool-eraser');
+  const colorSwatches = document.querySelectorAll('.color-swatch');
+  const sizePills = document.querySelectorAll('.size-pill');
+  const undoBtn = document.getElementById('undo-btn');
+  const clearBoardBtn = document.getElementById('clear-board-btn');
+  const whiteboardStrokeCount = document.getElementById('whiteboard-stroke-count');
   const remoteCursorsLayer = document.getElementById('remote-cursors-layer');
   const localCursorCoords = document.getElementById('local-cursor-coords');
+  const floatingReactionsStage = document.getElementById('floating-reactions-stage');
 
-  // Counter Widget
+  // Counter Elements (Hidden fallbacks preserved for test compatibility)
   const counterVal = document.getElementById('counter-val');
   const counterVersionVal = document.getElementById('counter-version-val');
   const decrementBtn = document.getElementById('decrement-btn');
   const incrementBtn = document.getElementById('increment-btn');
-
-  // Reaction Cards
-  const reactionCards = document.querySelectorAll('.reaction-card');
+  const stepUpBtn = document.getElementById('step-up-btn');
+  const stepDownBtn = document.getElementById('step-down-btn');
+  const resetCounterBtn = document.getElementById('reset-counter-btn');
 
   // State Inspector & Ticker
   const roomStateOutput = document.getElementById('room-state-output');
@@ -119,10 +109,60 @@ document.addEventListener('DOMContentLoaded', () => {
   // ==========================================
   // 2. URL Parameters & Invite Link Helper
   // ==========================================
+  function showRoomError(msg) {
+    if (roomErrorBanner && roomErrorMessage) {
+      roomErrorMessage.textContent = msg;
+      roomErrorBanner.style.display = 'flex';
+    }
+    if (roomInput && roomInput.parentElement) {
+      roomInput.parentElement.classList.add('input-error');
+    }
+    addLog(`❌ ${msg}`);
+    if (roomErrorTimeout) clearTimeout(roomErrorTimeout);
+    roomErrorTimeout = setTimeout(() => {
+      hideRoomError();
+    }, 7000);
+  }
+
+  function hideRoomError() {
+    if (roomErrorBanner) roomErrorBanner.style.display = 'none';
+    if (roomInput && roomInput.parentElement) {
+      roomInput.parentElement.classList.remove('input-error');
+    }
+  }
+
+  if (dismissRoomErrorBtn) {
+    dismissRoomErrorBtn.addEventListener('click', hideRoomError);
+  }
+
   function sanitizeRoomId(name) {
     if (!name || typeof name !== 'string') return 'room-1';
     const cleaned = name.trim().replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40);
     return cleaned || 'room-1';
+  }
+
+  function validateRoomId(name) {
+    if (!name || typeof name !== 'string' || !name.trim()) {
+      return { valid: false, error: 'Please enter a room name.' };
+    }
+    const cleaned = name.trim().replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40);
+    if (!cleaned) {
+      return {
+        valid: false,
+        error: 'Invalid room name. Room names may only contain letters, numbers, hyphens, and underscores.',
+      };
+    }
+    return { valid: true, roomId: cleaned };
+  }
+
+  function updateActiveRoomChips(currentRoom) {
+    roomChips.forEach((chip) => {
+      if (chip.getAttribute('data-room') === currentRoom) {
+        chip.classList.add('active');
+      } else {
+        chip.classList.remove('active');
+      }
+    });
   }
 
   function getRoomFromUrl() {
@@ -185,144 +225,353 @@ document.addEventListener('DOMContentLoaded', () => {
       const li = document.createElement('li');
       li.className = 'log-item';
       const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-      li.innerHTML = `<span class="log-time">${timeStr}</span> <span>${msg}</span>`;
+      li.innerHTML = `<span class="log-time">${timeStr}</span> ${escapeHtml(msg)}`;
       activityLogList.insertBefore(li, activityLogList.firstChild);
-      while (activityLogList.children.length > 25) {
+      while (activityLogList.children.length > 20) {
         activityLogList.removeChild(activityLogList.lastChild);
       }
     }
   }
 
-  // ==========================================
-  // 4. Live Cursor Sharing
-  // ==========================================
-  const remoteCursors = new Map(); // sessionId -> DOMElement
+  function setSyncStatus(state, msg) {
+    if (!textSyncIndicator) return;
+    textSyncIndicator.className = `sync-badge ${state}`;
+    textSyncIndicator.textContent = msg;
+  }
 
-  function getOrCreateCursor(sessionId, displayName, color) {
-    let cursor = remoteCursors.get(sessionId);
-    if (!cursor) {
-      cursor = document.createElement('div');
-      cursor.className = 'cursor-indicator';
-      cursor.id = `cursor-${sessionId}`;
-      cursor.innerHTML = `
-        <svg class="cursor-pointer" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path d="M0 0L7.5 18.5L10.5 11L18 8L0 0Z" fill="${color || '#ef4444'}" stroke="#060608" stroke-width="1.5" stroke-linejoin="round"/>
-        </svg>
-        <span class="cursor-label" style="background-color: ${color || '#ef4444'};">${displayName || 'Anonymous'}</span>
-      `;
-      if (remoteCursorsLayer) {
-        remoteCursorsLayer.appendChild(cursor);
-      } else {
-        document.body.appendChild(cursor);
+  function escapeHtml(str) {
+    if (str === null || str === undefined) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+
+  // ==========================================
+  // 4. Collaborative Whiteboard Engine (Feature 3)
+  // ==========================================
+  let ctx = null;
+  let isDrawing = false;
+  let currentTool = 'pen'; // 'pen' | 'eraser'
+  let currentColor = '#f8fafc';
+  let currentSize = 5;
+  let currentStrokePoints = [];
+  let allStrokes = [];
+  let canvasWidth = 800;
+  let canvasHeight = 600;
+  let dpr = window.devicePixelRatio || 1;
+
+  if (whiteboardCanvas) {
+    ctx = whiteboardCanvas.getContext('2d');
+  }
+
+  function resizeCanvas() {
+    if (!whiteboardCanvas || !collabBoard || !ctx) return;
+    const rect = collabBoard.getBoundingClientRect();
+    canvasWidth = Math.max(rect.width, 300);
+    canvasHeight = Math.max(rect.height, 400);
+    dpr = window.devicePixelRatio || 1;
+
+    whiteboardCanvas.width = canvasWidth * dpr;
+    whiteboardCanvas.height = canvasHeight * dpr;
+    whiteboardCanvas.style.width = `${canvasWidth}px`;
+    whiteboardCanvas.style.height = `${canvasHeight}px`;
+
+    ctx.scale(dpr, dpr);
+    redrawAllStrokes();
+  }
+
+  window.addEventListener('resize', () => {
+    resizeCanvas();
+  });
+  setTimeout(resizeCanvas, 150);
+
+  function getCanvasCoords(e) {
+    if (!whiteboardCanvas) return { x: 0, y: 0 };
+    const rect = whiteboardCanvas.getBoundingClientRect();
+    let clientX = e.clientX;
+    let clientY = e.clientY;
+
+    if (e.touches && e.touches.length > 0) {
+      clientX = e.touches[0].clientX;
+      clientY = e.touches[0].clientY;
+    }
+
+    return {
+      x: Math.round((clientX - rect.left) * 10) / 10,
+      y: Math.round((clientY - rect.top) * 10) / 10,
+    };
+  }
+
+  function drawStroke(stroke) {
+    if (!ctx || !stroke || !Array.isArray(stroke.points) || stroke.points.length === 0) return;
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = stroke.size || 5;
+
+    if (stroke.isEraser) {
+      ctx.strokeStyle = '#08080c';
+    } else {
+      ctx.strokeStyle = stroke.color || '#f8fafc';
+    }
+
+    const pts = stroke.points;
+    if (pts.length === 1) {
+      ctx.beginPath();
+      ctx.arc(pts[0].x, pts[0].y, (stroke.size || 5) / 2, 0, Math.PI * 2);
+      ctx.fillStyle = ctx.strokeStyle;
+      ctx.fill();
+    } else {
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) {
+        ctx.lineTo(pts[i].x, pts[i].y);
       }
-      remoteCursors.set(sessionId, cursor);
+      ctx.stroke();
     }
-    return cursor;
+    ctx.restore();
   }
 
-  function removeCursor(sessionId) {
-    const cursor = remoteCursors.get(sessionId);
-    if (cursor) {
-      if (cursor.parentNode) cursor.parentNode.removeChild(cursor);
-      remoteCursors.delete(sessionId);
+  function updateUndoButtonState() {
+    if (!undoBtn) return;
+    const mySessionId = sync.getSessionId();
+    const myUserId = sync.getUserId();
+    const hasMyStrokes = allStrokes.some(
+      (s) => s.authorId === mySessionId || s.authorId === myUserId
+    );
+    undoBtn.disabled = !hasMyStrokes;
+    if (hasMyStrokes) {
+      undoBtn.classList.remove('disabled');
+      undoBtn.setAttribute('title', 'Undo your last stroke');
+    } else {
+      undoBtn.classList.add('disabled');
+      undoBtn.setAttribute('title', 'No strokes to undo');
     }
   }
 
-  function clearAllCursors() {
-    remoteCursors.forEach((cursor) => {
-      if (cursor && cursor.parentNode) cursor.parentNode.removeChild(cursor);
+  function redrawAllStrokes() {
+    if (!ctx) return;
+    ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+    for (const stroke of allStrokes) {
+      drawStroke(stroke);
+    }
+    updateStrokeCount();
+    updateUndoButtonState();
+  }
+
+  function updateStrokeCount() {
+    if (whiteboardStrokeCount) {
+      whiteboardStrokeCount.textContent = `${allStrokes.length} stroke${allStrokes.length === 1 ? '' : 's'}`;
+    }
+  }
+
+  // Pointer event listeners on canvas for mouse & touch
+  if (whiteboardCanvas) {
+    whiteboardCanvas.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      try {
+        whiteboardCanvas.setPointerCapture(e.pointerId);
+      } catch (err) {}
+
+      isDrawing = true;
+      const coords = getCanvasCoords(e);
+      currentStrokePoints = [coords];
+
+      drawStroke({
+        color: currentColor,
+        size: currentSize,
+        isEraser: currentTool === 'eraser',
+        points: currentStrokePoints,
+      });
+
+      sync.sendCursor({ x: coords.x, y: coords.y, isDrawing: true });
     });
-    remoteCursors.clear();
-  }
 
-  // Capture cursor movements within the collaborative surface
-  if (collabBoard) {
-    collabBoard.addEventListener('mousemove', (e) => {
-      const rect = collabBoard.getBoundingClientRect();
-      const relX = Math.round(e.clientX - rect.left);
-      const relY = Math.round(e.clientY - rect.top);
-
+    whiteboardCanvas.addEventListener('pointermove', (e) => {
+      const coords = getCanvasCoords(e);
       if (localCursorCoords) {
-        localCursorCoords.textContent = `Cursor: X: ${relX}, Y: ${relY}`;
+        localCursorCoords.textContent = `X: ${Math.round(coords.x)}, Y: ${Math.round(coords.y)}`;
       }
 
-      if (sync.isConnected() && sync.getRoom()) {
-        const pctX = rect.width > 0 ? relX / rect.width : 0;
-        const pctY = rect.height > 0 ? relY / rect.height : 0;
-        sync.sendCursor({
-          x: relX,
-          y: relY,
-          data: { pctX, pctY },
+      if (isDrawing) {
+        e.preventDefault();
+        const prev = currentStrokePoints[currentStrokePoints.length - 1];
+        currentStrokePoints.push(coords);
+
+        if (ctx && prev) {
+          ctx.save();
+          ctx.lineCap = 'round';
+          ctx.lineJoin = 'round';
+          ctx.lineWidth = currentSize;
+          ctx.strokeStyle = currentTool === 'eraser' ? '#08080c' : currentColor;
+          ctx.beginPath();
+          ctx.moveTo(prev.x, prev.y);
+          ctx.lineTo(coords.x, coords.y);
+          ctx.stroke();
+          ctx.restore();
+        }
+      }
+
+      sync.sendCursor({ x: coords.x, y: coords.y, isDrawing });
+    });
+
+    const handlePointerUp = (e) => {
+      if (!isDrawing) return;
+      isDrawing = false;
+      try {
+        whiteboardCanvas.releasePointerCapture(e.pointerId);
+      } catch (err) {}
+
+      if (currentStrokePoints.length > 0) {
+        const stroke = {
+          id: `str_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+          color: currentColor,
+          size: currentSize,
+          isEraser: currentTool === 'eraser',
+          points: currentStrokePoints,
+          authorId: sync.getSessionId(),
+          authorName: sync.getDisplayName(),
+          timestamp: Date.now(),
+        };
+        allStrokes.push(stroke);
+        updateStrokeCount();
+        updateUndoButtonState();
+
+        sync.sendWhiteboardStroke(stroke);
+      }
+      currentStrokePoints = [];
+    };
+
+    whiteboardCanvas.addEventListener('pointerup', handlePointerUp);
+    whiteboardCanvas.addEventListener('pointercancel', handlePointerUp);
+  }
+
+  // Whiteboard Subscriptions from server
+  sync.onWhiteboardStroke(({ stroke }) => {
+    if (!stroke) return;
+    allStrokes.push(stroke);
+    drawStroke(stroke);
+    updateStrokeCount();
+    updateUndoButtonState();
+  });
+
+  sync.onWhiteboardCleared(() => {
+    allStrokes = [];
+    if (ctx) ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+    updateStrokeCount();
+    updateUndoButtonState();
+    addLog('🗑️ Whiteboard cleared by room member.');
+  });
+
+  sync.onWhiteboardUpdated(({ strokes }) => {
+    allStrokes = Array.isArray(strokes) ? strokes : [];
+    redrawAllStrokes();
+  });
+
+  // Whiteboard Tool Button Handlers
+  if (toolPenBtn) {
+    toolPenBtn.addEventListener('click', () => {
+      currentTool = 'pen';
+      toolPenBtn.classList.add('active');
+      toolPenBtn.setAttribute('aria-pressed', 'true');
+      if (toolEraserBtn) {
+        toolEraserBtn.classList.remove('active');
+        toolEraserBtn.setAttribute('aria-pressed', 'false');
+      }
+    });
+  }
+
+  if (toolEraserBtn) {
+    toolEraserBtn.addEventListener('click', () => {
+      currentTool = 'eraser';
+      toolEraserBtn.classList.add('active');
+      toolEraserBtn.setAttribute('aria-pressed', 'true');
+      if (toolPenBtn) {
+        toolPenBtn.classList.remove('active');
+        toolPenBtn.setAttribute('aria-pressed', 'false');
+      }
+    });
+  }
+
+  colorSwatches.forEach((swatch) => {
+    swatch.addEventListener('click', () => {
+      const color = swatch.getAttribute('data-color');
+      if (color) {
+        currentColor = color;
+        colorSwatches.forEach((s) => s.classList.remove('active'));
+        swatch.classList.add('active');
+
+        if (currentTool === 'eraser') {
+          currentTool = 'pen';
+          if (toolPenBtn) toolPenBtn.classList.add('active');
+          if (toolEraserBtn) toolEraserBtn.classList.remove('active');
+        }
+      }
+    });
+  });
+
+  sizePills.forEach((pill) => {
+    pill.addEventListener('click', () => {
+      const size = parseInt(pill.getAttribute('data-size'), 10);
+      if (size) {
+        currentSize = size;
+        sizePills.forEach((p) => p.classList.remove('active'));
+        pill.classList.add('active');
+      }
+    });
+  });
+
+  if (undoBtn) {
+    undoBtn.addEventListener('click', () => {
+      if (undoBtn.disabled) return;
+      sync.undoWhiteboard((res) => {
+        if (res && res.success) {
+          if (res.noUserStrokes) {
+            addLog('⚠️ No strokes drawn by you to undo.');
+          } else {
+            allStrokes = Array.isArray(res.strokes) ? res.strokes : [];
+            redrawAllStrokes();
+            addLog('⤺ Undid stroke on whiteboard.');
+          }
+        } else if (res && res.error) {
+          addLog(`❌ Undo failed: ${res.error}`);
+        }
+      });
+    });
+  }
+
+  if (clearBoardBtn) {
+    clearBoardBtn.addEventListener('click', () => {
+      if (confirm('Clear the collaborative whiteboard for all members in this room?')) {
+        sync.clearWhiteboard((res) => {
+          if (res && res.success) {
+            allStrokes = [];
+            if (ctx) ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+            updateStrokeCount();
+            updateUndoButtonState();
+            addLog('🗑️ Cleared whiteboard for room.');
+          } else if (res && res.error) {
+            addLog(`❌ Clear failed: ${res.error}`);
+          }
         });
       }
     });
-
-    window.addEventListener('mousemove', (e) => {
-      if (!localCursorCoords) return;
-      if (e.target && !collabBoard.contains(e.target)) {
-        localCursorCoords.textContent = `Window: X: ${e.clientX}, Y: ${e.clientY}`;
-      }
-    });
   }
-
-  // Render incoming remote cursors
-  sync.onCursorMove(({ sessionId, displayName, x, y, color, data }) => {
-    if (sessionId === sync.getSessionId()) return;
-
-    const cursor = getOrCreateCursor(sessionId, displayName, color);
-
-    if (collabBoard && data && typeof data.pctX === 'number' && typeof data.pctY === 'number') {
-      const rect = collabBoard.getBoundingClientRect();
-      const posX = Math.round(data.pctX * rect.width);
-      const posY = Math.round(data.pctY * rect.height);
-      cursor.style.transform = `translate3d(${posX}px, ${posY}px, 0)`;
-    } else {
-      cursor.style.transform = `translate3d(${x}px, ${y}px, 0)`;
-    }
-
-    const label = cursor.querySelector('.cursor-label');
-    if (label && displayName && label.textContent !== displayName) {
-      label.textContent = displayName;
-    }
-  });
 
   // ==========================================
-  // 5. Shared Room Notes Collection for Every Member
+  // 5. Multi-Member Shared Notes & Permissions
   // ==========================================
-  let activeEditingNoteId = null; // Track note currently being inline edited
-  let editDebounceTimer = null;
+  let activeEditingNoteId = null;
 
-  function setSyncStatus(status, text) {
-    if (!textSyncIndicator) return;
-    textSyncIndicator.className = `sync-badge ${status}`;
-    textSyncIndicator.textContent = text;
-  }
-
-  function formatRelativeTime(dateStr) {
-    if (!dateStr) return 'Just now';
-    try {
-      const d = new Date(dateStr);
-      if (isNaN(d.getTime())) return 'Recently';
-      const now = new Date();
-      const diffSec = Math.floor((now - d) / 1000);
-      if (diffSec < 10) return 'Just now';
-      if (diffSec < 60) return `${diffSec}s ago`;
-      const diffMin = Math.floor(diffSec / 60);
-      if (diffMin < 60) return `${diffMin}m ago`;
-      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    } catch (e) {
-      return 'Recently';
-    }
-  }
-
-  // Toggle New Note Form
   if (openCreateNoteBtn) {
     openCreateNoteBtn.addEventListener('click', () => {
-      if (!newNoteForm) return;
-      const isHidden = newNoteForm.style.display === 'none';
-      newNoteForm.style.display = isHidden ? 'flex' : 'none';
-      if (isHidden && newNoteContent) {
-        newNoteContent.focus();
+      if (newNoteForm) {
+        newNoteForm.style.display = 'flex';
+        sync.isLocalEditing = true;
+        if (newNoteTitle) newNoteTitle.focus();
       }
     });
   }
@@ -331,263 +580,228 @@ document.addEventListener('DOMContentLoaded', () => {
     if (newNoteForm) newNoteForm.style.display = 'none';
     if (newNoteTitle) newNoteTitle.value = '';
     if (newNoteContent) newNoteContent.value = '';
+    if (newNotePermission) newNotePermission.value = 'public';
+    sync.isLocalEditing = false;
   }
 
   if (cancelCreateNoteBtn) cancelCreateNoteBtn.addEventListener('click', closeNewNoteForm);
   if (cancelNoteBtn) cancelNoteBtn.addEventListener('click', closeNewNoteForm);
 
-  // Publish New Note
+  [newNoteTitle, newNoteContent].forEach((el) => {
+    if (el) {
+      el.addEventListener('focus', () => { sync.isLocalEditing = true; });
+      el.addEventListener('blur', () => {
+        if (!newNoteForm || newNoteForm.style.display === 'none') {
+          sync.isLocalEditing = false;
+        }
+      });
+    }
+  });
+
   if (saveNoteBtn) {
     saveNoteBtn.addEventListener('click', () => {
-      const content = newNoteContent ? newNoteContent.value.trim() : '';
       const title = newNoteTitle ? newNoteTitle.value.trim() : '';
-      const editable = newNoteEditable ? newNoteEditable.checked : true;
+      const content = newNoteContent ? newNoteContent.value.trim() : '';
+      const permission = newNotePermission ? newNotePermission.value : 'public';
 
-      if (!content) {
-        alert('Please write some content for your note.');
-        if (newNoteContent) newNoteContent.focus();
+      if (!content && !title) {
+        alert('Please enter a note title or content.');
         return;
       }
 
-      setSyncStatus('saving', '◌ Publishing note...');
-      sync.createNote({ title, content, editable }, (res) => {
+      setSyncStatus('saving', '◌ Saving note...');
+      sync.createNote({ title, content, permission }, (res) => {
+        closeNewNoteForm();
         if (res && res.success) {
-          closeNewNoteForm();
           setSyncStatus('synced', `● Synced (v${res.version || sync.getState().version || 1})`);
-          addLog(`📝 Published note "${title || content.slice(0, 20)}..." (${editable ? '🔓 Editable by all' : '🔒 Locked to author'}).`);
+          addLog(`📝 Created new note "${title || content.slice(0, 20)}...".`);
         } else {
           setSyncStatus('offline', '❌ Error saving');
-          alert('Failed to publish note. Please check your connection.');
+          alert(`Failed to save note: ${res?.error || 'Server error'}`);
         }
       });
     });
   }
 
-  // Render Note Cards List
   function renderNotesList(state) {
     if (!notesCardsList) return;
+    const notes = Array.isArray(state?.notesList) ? state.notesList : [];
 
-    let notes = [];
-    if (Array.isArray(state?.notesList)) {
-      notes = state.notesList;
-    } else if (state?.notes || state?.text) {
-      // Backward compatibility fallback: synthesize a single note card from legacy text
-      const content = state.notes || state.text;
-      notes = [{
-        id: 'note_legacy_primary',
-        authorId: state.lastUpdatedBy || 'system',
-        authorName: state.lastUpdatedBy === sync.getUserId() ? sync.getDisplayName() : 'Collaborator',
-        authorColor: '#ef4444',
-        title: 'Room Note',
-        content: content,
-        createdAt: state.lastUpdated || new Date().toISOString(),
-        updatedAt: state.lastUpdated || new Date().toISOString(),
-      }];
-    }
-
-    // Update count badge
     if (notesCountBadge) {
-      notesCountBadge.textContent = `${notes.length} ${notes.length === 1 ? 'note' : 'notes'}`;
+      notesCountBadge.textContent = `${notes.length} note${notes.length === 1 ? '' : 's'}`;
     }
 
-    // Update legacy hidden fields
-    const serializedNotes = notes.map((n) => n.content).join('\n\n');
-    if (sharedTextArea) sharedTextArea.value = serializedNotes;
-    if (sharedTextInput) sharedTextInput.value = serializedNotes;
-
-    // Empty state
     if (notes.length === 0) {
       notesCardsList.innerHTML = `
         <div id="notes-empty-state" class="notes-empty-card">
           <span class="empty-icon">📋</span>
           <h4 class="empty-title">No Notes in This Room</h4>
-          <p class="empty-desc">Click <strong>"Create Note"</strong> above to share a note with all members in this room in real time.</p>
+          <p class="empty-desc">Click <strong>"Create Note"</strong> above to share a note with all room members in real time.</p>
         </div>
       `;
       return;
     }
 
-    // If user is currently editing an active note, preserve their active textarea to avoid losing focus
-    if (activeEditingNoteId) {
-      const activeTextarea = document.getElementById(`edit-textarea-${activeEditingNoteId}`);
-      if (activeTextarea && document.activeElement === activeTextarea) {
-        // Only re-render non-active notes or update timestamps
-        return;
-      }
-    }
+    const currentMyId = sync.getSessionId();
+    const currentMyKey = sync.getAuthorKey();
 
-    // Build cards HTML
-    notesCardsList.innerHTML = '';
+    let html = '';
     notes.forEach((note) => {
-      const isMyNote = note.authorId === sync.getSessionId();
-      const isEditable = note.editable !== false;
-      const canEdit = isMyNote || isEditable;
-      const authorColor = note.authorColor || SyncKit.getUserColor(note.authorId);
-      const isCurrentlyEditing = activeEditingNoteId === note.id;
+      const isAuthor =
+        Boolean(currentMyKey && note.authorKey && currentMyKey === note.authorKey) ||
+        Boolean(currentMyId && note.authorId === currentMyId);
+      const isPrivate = note.permission === 'private';
+      const canEdit = isAuthor || !isPrivate;
+      const canDelete = isAuthor;
 
-      const card = document.createElement('div');
-      card.className = `note-item-card ${isMyNote ? 'is-own-note' : ''} ${!isEditable ? 'is-locked-note' : ''}`;
-      card.id = `note-card-${note.id}`;
+      const formattedTime = note.updatedAt
+        ? new Date(note.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        : 'Now';
 
-      if (isCurrentlyEditing) {
-        // Edit mode card
-        card.innerHTML = `
-          <div class="note-card-top">
-            <div class="note-author-info">
-              <span class="note-author-dot" style="background-color: ${authorColor};"></span>
-              <span class="note-author-name">${escapeHtml(note.authorName || 'Member')}</span>
-              ${isMyNote ? '<span class="note-you-pill">You</span>' : ''}
+      if (activeEditingNoteId === note.id) {
+        // Inline Edit Card Mode
+        html += `
+          <div class="note-item-card is-editing" data-note-id="${note.id}">
+            <div class="note-card-top">
+              <span class="form-title">✏️ Editing Note</span>
             </div>
-            <span class="note-time">Editing</span>
-          </div>
-          <input type="text" id="edit-title-${note.id}" class="note-input-title" value="${escapeHtml(note.title || '')}" placeholder="Title (optional)" />
-          <textarea id="edit-textarea-${note.id}" class="note-edit-area" rows="4">${escapeHtml(note.content || '')}</textarea>
-          ${isMyNote ? `
-            <div class="note-permission-row" style="margin-top: 0.35rem; padding: 0.4rem 0.6rem;">
-              <label class="perm-checkbox-label" for="edit-editable-${note.id}">
-                <input type="checkbox" id="edit-editable-${note.id}" ${isEditable ? 'checked' : ''} />
-                <span class="perm-checkbox-custom"></span>
-                <span class="perm-text-group">
-                  <strong class="perm-title" style="font-size: 0.78rem;">Allow other members to edit this note</strong>
-                </span>
-              </label>
+            <input type="text" class="note-input-title edit-note-title" value="${escapeHtml(note.title || '')}" placeholder="Note title..." />
+            <textarea class="note-edit-area edit-note-content" rows="4">${escapeHtml(note.content || '')}</textarea>
+            ${
+              isAuthor
+                ? `
+              <div class="note-permission-row">
+                <label class="perm-label"><span class="perm-icon">🛡️</span> Permission:</label>
+                <select class="permission-select edit-note-permission">
+                  <option value="public" ${note.permission !== 'private' ? 'selected' : ''}>🌐 Anyone in this room can edit</option>
+                  <option value="private" ${note.permission === 'private' ? 'selected' : ''}>🔒 Only I can edit</option>
+                </select>
+              </div>
+            `
+                : ''
+            }
+            <div class="new-note-actions">
+              <button class="btn btn-xs btn-outline cancel-edit-btn" data-id="${note.id}">Cancel</button>
+              <button class="btn btn-xs btn-primary save-edit-btn" data-id="${note.id}">Save Changes</button>
             </div>
-          ` : ''}
-          <div class="new-note-actions" style="margin-top: 0.4rem;">
-            <button class="btn btn-xs btn-outline cancel-edit-btn" data-id="${note.id}">Cancel</button>
-            <button class="btn btn-xs btn-primary save-edit-btn" data-id="${note.id}">Save Changes</button>
           </div>
         `;
       } else {
-        // Normal view card
-        card.innerHTML = `
-          <div class="note-card-top">
-            <div class="note-author-info">
-              <span class="note-author-dot" style="background-color: ${authorColor};"></span>
-              <span class="note-author-name">${escapeHtml(note.authorName || 'Member')}</span>
-              ${isMyNote ? '<span class="note-you-pill">You</span>' : ''}
+        // Normal View Mode
+        html += `
+          <div class="note-item-card ${isAuthor ? 'is-own-note' : ''}" data-note-id="${note.id}">
+            <div class="note-card-top">
+              <div class="note-author-info">
+                <span class="note-author-dot" style="background-color: ${escapeHtml(note.authorColor || '#ef4444')};"></span>
+                <span class="note-author-name">${escapeHtml(note.authorName || 'Member')}</span>
+                ${isAuthor ? '<span class="note-you-pill">You</span>' : ''}
+              </div>
+              <div class="note-top-right">
+                <span class="perm-badge ${isPrivate ? 'private' : 'public'}">
+                  ${isPrivate ? '🔒 Only I can edit' : '🌐 Anyone can edit'}
+                </span>
+                <span class="note-time">${formattedTime}</span>
+              </div>
             </div>
-            <div class="note-top-right">
-              ${isEditable
-                ? '<span class="note-perm-pill editable" title="Anyone in this room can edit this note">🔓 Editable by all</span>'
-                : '<span class="note-perm-pill locked" title="Only the author can edit this note">🔒 Locked (Author only)</span>'
-              }
-              <span class="note-time">${formatRelativeTime(note.updatedAt || note.createdAt)}</span>
-            </div>
-          </div>
-          ${note.title ? `<div class="note-card-title">${escapeHtml(note.title)}</div>` : ''}
-          <div class="note-card-body">${escapeHtml(note.content || '')}</div>
-          <div class="note-card-footer">
-            <span class="note-shared-badge" title="${isEditable ? 'Collaborative: Any member can edit' : 'Author protected'}">
-              ${isEditable ? '🌐 Room Shared' : '🔒 Protected'}
-            </span>
-            <div class="note-actions-group">
-              ${isMyNote ? `
-                <button class="btn-note-action perm-toggle-btn" data-id="${note.id}" title="${isEditable ? 'Click to lock note (only you can edit)' : 'Click to unlock note (allow all members to edit)'}">
-                  ${isEditable ? '🔒 Lock' : '🔓 Unlock'}
-                </button>
-              ` : ''}
-              ${canEdit ? `
-                <button class="btn-note-action edit-note-btn" data-id="${note.id}" title="Edit note">✏️ Edit</button>
-              ` : `
-                <button class="btn-note-action locked" disabled title="Locked: Only ${escapeHtml(note.authorName || 'author')} can edit this note">🔒 Read-only</button>
-              `}
-              ${(isMyNote || isEditable) ? `
-                <button class="btn-note-action delete delete-note-btn" data-id="${note.id}" title="Delete note">🗑️ Delete</button>
-              ` : ''}
+
+            ${note.title ? `<h3 class="note-card-title">${escapeHtml(note.title)}</h3>` : ''}
+            <div class="note-card-body">${escapeHtml(note.content || '')}</div>
+
+            <div class="note-card-footer">
+              <span class="note-shared-badge">
+                ${isPrivate ? '🔒 Private Note' : '🌐 Room Shared'}
+              </span>
+              <div class="note-actions-group">
+                ${
+                  canEdit
+                    ? `
+                  <button class="btn-note-action edit-note-btn" data-id="${note.id}" title="Edit note">
+                    ✏️ Edit
+                  </button>
+                `
+                    : `
+                  <span class="btn-note-action" style="opacity: 0.6; cursor: not-allowed;" title="Locked: Only the author can edit this note">🔒 Locked</span>
+                `
+                }
+                ${
+                  canDelete
+                    ? `
+                  <button class="btn-note-action delete delete-note-btn" data-id="${note.id}" title="Delete note">
+                    🗑️ Delete
+                  </button>
+                `
+                    : ''
+                }
+              </div>
             </div>
           </div>
         `;
       }
-
-      notesCardsList.appendChild(card);
     });
 
-    // Attach listeners for Edit, Delete, Save, Toggle Permission
-    attachNoteCardActions();
+    notesCardsList.innerHTML = html;
+    attachNoteActionListeners();
   }
 
-  function escapeHtml(text) {
-    if (!text) return '';
-    return String(text)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#039;');
-  }
-
-  function attachNoteCardActions() {
-    // Permission toggle buttons (Author only)
-    document.querySelectorAll('.perm-toggle-btn').forEach((btn) => {
-      btn.addEventListener('click', (e) => {
-        const id = e.currentTarget.getAttribute('data-id');
-        setSyncStatus('saving', '◌ Updating permission...');
-        sync.toggleNoteEditable(id, (res) => {
-          if (res && res.success) {
-            setSyncStatus('synced', `● Synced (v${res.version || sync.getState().version || 1})`);
-            addLog(`🔒 Updated note editing permission.`);
-          } else {
-            setSyncStatus('offline', '❌ Error');
-            alert(res?.error || 'Failed to update note permission.');
-          }
-        });
-      });
-    });
-
+  function attachNoteActionListeners() {
     // Edit buttons
     document.querySelectorAll('.edit-note-btn').forEach((btn) => {
       btn.addEventListener('click', (e) => {
         const id = e.currentTarget.getAttribute('data-id');
         activeEditingNoteId = id;
+        sync.isLocalEditing = true;
         renderNotesList(sync.getState());
-        const textarea = document.getElementById(`edit-textarea-${id}`);
-        if (textarea) {
-          textarea.focus();
-          textarea.setSelectionRange(textarea.value.length, textarea.value.length);
-        }
       });
     });
 
-    // Cancel edit buttons
+    // Cancel edit
     document.querySelectorAll('.cancel-edit-btn').forEach((btn) => {
       btn.addEventListener('click', () => {
         activeEditingNoteId = null;
+        sync.isLocalEditing = false;
         renderNotesList(sync.getState());
       });
     });
 
-    // Save edit buttons
+    // Save edit
     document.querySelectorAll('.save-edit-btn').forEach((btn) => {
       btn.addEventListener('click', (e) => {
         const id = e.currentTarget.getAttribute('data-id');
-        const titleInput = document.getElementById(`edit-title-${id}`);
-        const contentTextarea = document.getElementById(`edit-textarea-${id}`);
-        const editEditableCheckbox = document.getElementById(`edit-editable-${id}`);
-        const updatedTitle = titleInput ? titleInput.value.trim() : '';
-        const updatedContent = contentTextarea ? contentTextarea.value.trim() : '';
+        const card = e.currentTarget.closest('.note-item-card');
+        const titleInput = card.querySelector('.edit-note-title');
+        const contentInput = card.querySelector('.edit-note-content');
+        const permSelect = card.querySelector('.edit-note-permission');
 
-        if (!updatedContent) {
-          alert('Note content cannot be empty. Click Delete if you wish to remove it.');
+        const updatedTitle = titleInput ? titleInput.value.trim() : '';
+        const updatedContent = contentInput ? contentInput.value.trim() : '';
+        const updatedPerm = permSelect ? permSelect.value : undefined;
+
+        if (!updatedContent && !updatedTitle) {
+          alert('Note cannot be completely empty.');
           return;
         }
 
-        const updates = { title: updatedTitle, content: updatedContent };
-        if (editEditableCheckbox) {
-          updates.editable = editEditableCheckbox.checked;
-        }
-
         setSyncStatus('saving', '◌ Saving changes...');
-        sync.editNote(id, updates, (res) => {
-          activeEditingNoteId = null;
-          if (res && res.success) {
-            setSyncStatus('synced', `● Synced (v${res.version || sync.getState().version || 1})`);
-            addLog(`✏️ Updated note "${updatedTitle || updatedContent.slice(0, 20)}...".`);
-          } else {
-            setSyncStatus('offline', '❌ Error saving');
-            alert(res?.error || 'Failed to save note changes.');
+        sync.editNote(
+          id,
+          {
+            title: updatedTitle,
+            content: updatedContent,
+            permission: updatedPerm,
+          },
+          (res) => {
+            activeEditingNoteId = null;
+            sync.isLocalEditing = false;
+            if (res && res.success) {
+              setSyncStatus('synced', `● Synced (v${res.version || sync.getState().version || 1})`);
+              addLog(`✏️ Updated note "${updatedTitle || updatedContent.slice(0, 20)}...".`);
+            } else {
+              setSyncStatus('offline', '❌ Error saving');
+              alert(`Error saving note: ${res?.error || 'Unauthorized'}`);
+              renderNotesList(sync.getState());
+            }
           }
-        });
+        );
       });
     });
 
@@ -603,7 +817,7 @@ document.addEventListener('DOMContentLoaded', () => {
               addLog('🗑️ Deleted note from room.');
             } else {
               setSyncStatus('offline', '❌ Error deleting');
-              alert(res?.error || 'Failed to delete note.');
+              alert(`Error deleting note: ${res?.error || 'Unauthorized'}`);
             }
           });
         }
@@ -618,17 +832,17 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!state) return;
     const v = state.version ?? 1;
 
-    // Counter Widget
+    // Counter Widget fallbacks
     if (counterVal) counterVal.textContent = state.count ?? 0;
     if (counterVersionVal) counterVersionVal.textContent = v;
     if (stateVersion) stateVersion.textContent = v;
     if (roomStateOutput) roomStateOutput.textContent = JSON.stringify(state, null, 2);
 
-    // Multi-member room notes
     renderNotesList(state);
 
     if (noteMetaText) {
-      const editor = state.lastUpdatedBy === sync.getUserId() ? 'You' : `User ${String(state.lastUpdatedBy).slice(0, 6)}`;
+      const editor =
+        state.lastUpdatedBy === sync.getUserId() ? 'You' : `User ${String(state.lastUpdatedBy).slice(0, 6)}`;
       noteMetaText.textContent = `State v${v} • Last updated by ${editor}`;
     }
 
@@ -672,7 +886,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (details?.recovered) {
           showRecoveryBanner(sync.getState().version || 1);
         }
-        addLog('🔄 Successfully reconnected! Authoritative room state and notes recovered from server.');
+        addLog('🔄 Successfully reconnected! Authoritative state, notes, and whiteboard restored from server.');
         break;
 
       case 'disconnected':
@@ -688,7 +902,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // Toggle Disconnect/Reconnect Button handler
   if (toggleConnectionBtn) {
     toggleConnectionBtn.addEventListener('click', () => {
       if (sync.isConnected()) {
@@ -699,7 +912,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // State Recovery Banner
   function showRecoveryBanner(version) {
     if (recoveryBanner) {
       if (recoveryVersionText) recoveryVersionText.textContent = `v${version}`;
@@ -708,7 +920,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       setTimeout(() => {
         if (recoveryBanner) recoveryBanner.style.display = 'none';
-      }, 9000);
+      }, 8000);
     }
   }
 
@@ -718,7 +930,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // State Changes Subscription
   sync.onStateChange((state, meta) => {
     if (roomDetails) roomDetails.style.display = 'block';
     if (activeRoomName) activeRoomName.textContent = sync.getRoom();
@@ -741,7 +952,6 @@ document.addEventListener('DOMContentLoaded', () => {
     if (presenceCount) presenceCount.textContent = users.length;
     if (activeRoomMembers) activeRoomMembers.textContent = users.length;
 
-    // Clean up cursors for disconnected members
     const activeSessionIds = new Set(users.map((u) => u.sessionId));
     remoteCursors.forEach((_, sessionId) => {
       if (!activeSessionIds.has(sessionId)) {
@@ -772,36 +982,95 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // Error listener
   sync.onError((err) => {
     addLog(`❌ SyncKit Error: ${err.message}`);
   });
 
   // ==========================================
-  // 9. Room Joining & Switching (No Stale Leaks)
+  // 9. Remote Cursors on Whiteboard
   // ==========================================
-  function handleJoinRoom(roomId) {
-    const targetRoom = sanitizeRoomId(roomId);
-    if (!targetRoom) {
-      addLog('⚠️ Please enter a room name.');
-      return;
+  const remoteCursors = new Map();
+
+  function updateRemoteCursor(data) {
+    if (!remoteCursorsLayer) return;
+    const { sessionId, displayName, x, y, color } = data;
+    if (sessionId === sync.getSessionId() || data.userId === sync.getUserId()) return;
+
+    let cursorElem = remoteCursors.get(sessionId);
+
+    if (!cursorElem) {
+      cursorElem = document.createElement('div');
+      cursorElem.className = 'remote-cursor cursor-indicator';
+      cursorElem.setAttribute('data-session-id', sessionId);
+
+      cursorElem.innerHTML = `
+        <svg class="cursor-pointer" viewBox="0 0 16 16" width="16" height="16">
+          <path d="M0 0 L14 5 L8 8 L5 14 Z" fill="${color || '#ef4444'}" stroke="#000" stroke-width="1.2"/>
+        </svg>
+        <span class="cursor-label" style="background-color: ${color || '#ef4444'};">${escapeHtml(
+        displayName || 'Anonymous'
+      )}</span>
+      `;
+
+      remoteCursorsLayer.appendChild(cursorElem);
+      remoteCursors.set(sessionId, cursorElem);
     }
 
-    // Immediately reset notes, discussions, whiteboard and cursors to prevent stale leak from previous room
+    cursorElem.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+  }
+
+  function removeCursor(sessionId) {
+    const cursorElem = remoteCursors.get(sessionId);
+    if (cursorElem && cursorElem.parentNode) {
+      cursorElem.parentNode.removeChild(cursorElem);
+    }
+    remoteCursors.delete(sessionId);
+  }
+
+  function clearAllCursors() {
+    remoteCursors.forEach((elem) => {
+      if (elem.parentNode) elem.parentNode.removeChild(elem);
+    });
+    remoteCursors.clear();
+  }
+
+  sync.onCursorMove((data) => {
+    updateRemoteCursor(data);
+  });
+
+  // ==========================================
+  // 10. Room Joining & Switching
+  // ==========================================
+  function handleJoinRoom(rawRoomId) {
+    hideRoomError();
+    const val = validateRoomId(rawRoomId);
+    if (!val.valid) {
+      showRoomError(val.error);
+      return;
+    }
+    const targetRoom = val.roomId;
+
+    if (!sync.isConnected()) {
+      addLog(`⏳ Connecting to server to join "${targetRoom}"...`);
+      sync.connect();
+    }
+
     activeEditingNoteId = null;
-    clearTimeout(editDebounceTimer);
     closeNewNoteForm();
     clearAllCursors();
-    clearLocalCanvas();
+    if (floatingReactionsStage) floatingReactionsStage.innerHTML = '';
+    allStrokes = [];
+    if (ctx) ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+    updateStrokeCount();
+    updateUndoButtonState();
 
     if (notesRoomBadge) notesRoomBadge.textContent = targetRoom;
-    if (discussionRoomBadge) discussionRoomBadge.textContent = targetRoom;
     if (activeRoomName) activeRoomName.textContent = targetRoom;
     if (navRoomName) navRoomName.textContent = targetRoom;
     if (roomInput) roomInput.value = targetRoom;
     updateBrowserUrl(targetRoom);
+    updateActiveRoomChips(targetRoom);
 
-    // Visual loading state for notes
     if (notesCardsList) {
       notesCardsList.innerHTML = `
         <div class="notes-empty-card">
@@ -813,28 +1082,35 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     setSyncStatus('saving', '◌ Loading notes...');
 
-    if (!sync.isConnected()) {
-      addLog(`⏳ Connecting to server to join "${targetRoom}"...`);
-      sync.connect();
-    }
+    let joinFinished = false;
+    const joinTimeout = setTimeout(() => {
+      if (!joinFinished) {
+        showRoomError(`Connection to room "${targetRoom}" timed out. Server is unreachable.`);
+        setSyncStatus('offline', '❌ Unreachable');
+      }
+    }, 6000);
 
     sync.joinRoom(targetRoom, (res) => {
+      joinFinished = true;
+      clearTimeout(joinTimeout);
+
       if (res && res.success) {
+        hideRoomError();
         if (roomDetails) roomDetails.style.display = 'block';
         if (roomStatusBadge) {
           roomStatusBadge.textContent = `Joined ${targetRoom}`;
         }
         if (activeRoomMembers) activeRoomMembers.textContent = res.presence?.length || 1;
+        if (presenceCount) presenceCount.textContent = res.presence?.length || 1;
         if (res.state) renderState(res.state);
 
-        // Load discussions and whiteboard from SQLite database for target room
-        if (discussionRoomBadge) discussionRoomBadge.textContent = targetRoom;
-        renderDiscussionsList(sync.getDiscussions());
-        redrawAllWhiteboardStrokes(sync.getWhiteboardStrokes());
+        allStrokes = Array.isArray(res.whiteboard) ? res.whiteboard : [];
+        redrawAllStrokes();
 
-        addLog(`✅ Joined room "${targetRoom}". Authoritative state, notes & discussions synchronized.`);
-      } else if (res && res.error) {
-        addLog(`❌ Failed to join room "${targetRoom}": ${res.error}`);
+        addLog(`✅ Joined room "${targetRoom}". Authoritative state & notes synchronized.`);
+      } else {
+        const err = res?.error || 'Failed to join room';
+        showRoomError(err);
         setSyncStatus('offline', '❌ Error');
       }
     });
@@ -842,17 +1118,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
   if (joinBtn) {
     joinBtn.addEventListener('click', () => {
-      handleJoinRoom(roomInput.value.trim());
+      handleJoinRoom(roomInput ? roomInput.value : '');
     });
   }
 
   if (roomInput) {
+    roomInput.addEventListener('input', () => {
+      hideRoomError();
+    });
     roomInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') handleJoinRoom(roomInput.value.trim());
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        handleJoinRoom(roomInput.value);
+      }
     });
   }
 
-  // Quick Room Chips
   roomChips.forEach((chip) => {
     chip.addEventListener('click', () => {
       const target = chip.getAttribute('data-room');
@@ -878,40 +1159,31 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Counter Actions
+  // Counter Actions (Hidden fallbacks preserved for backward test compatibility)
   if (incrementBtn) {
     incrementBtn.addEventListener('click', () => {
       const current = sync.getState().count || 0;
       sync.updateState({ count: current + 1 });
     });
   }
-
   if (decrementBtn) {
     decrementBtn.addEventListener('click', () => {
       const current = sync.getState().count || 0;
       sync.updateState({ count: current - 1 });
     });
   }
-
-  // Quick Step Counters (+5, -5, ↺ 0)
-  const stepUpBtn = document.getElementById('step-up-btn');
-  const stepDownBtn = document.getElementById('step-down-btn');
-  const resetCounterBtn = document.getElementById('reset-counter-btn');
-
   if (stepUpBtn) {
     stepUpBtn.addEventListener('click', () => {
       const current = sync.getState().count || 0;
       sync.updateState({ count: current + 5 });
     });
   }
-
   if (stepDownBtn) {
     stepDownBtn.addEventListener('click', () => {
       const current = sync.getState().count || 0;
       sync.updateState({ count: current - 5 });
     });
   }
-
   if (resetCounterBtn) {
     resetCounterBtn.addEventListener('click', () => {
       sync.updateState({ count: 0 });
@@ -919,28 +1191,25 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // ==========================================
-  // Live Room Reactions & Pop-Up Floating Animation (~1s)
+  // 11. Live Room Reactions (Feature 4)
   // ==========================================
-  const floatingReactionsStage = document.getElementById('floating-reactions-stage');
-
   function triggerReactionAnimation(emoji, senderName = 'You', sourceElement = null) {
     if (!floatingReactionsStage) return;
 
     const bubble = document.createElement('div');
     bubble.className = 'floating-reaction-bubble';
 
-    // Slight random horizontal offset & rotation so multiple rapid reactions don't overlap
-    const xOffset = Math.floor(Math.random() * 80) - 40; // -40px to +40px
-    const rotation = Math.floor(Math.random() * 24) - 12; // -12deg to +12deg
+    const xOffset = Math.floor(Math.random() * 80) - 40;
+    const rotation = Math.floor(Math.random() * 24) - 12;
 
     let startLeft = '50%';
-    let startTop = '35%';
+    let startTop = '40%';
 
     if (sourceElement) {
       const stageRect = floatingReactionsStage.getBoundingClientRect();
       const btnRect = sourceElement.getBoundingClientRect();
       if (stageRect.width > 0) {
-        const relLeft = btnRect.left - stageRect.left + (btnRect.width / 2);
+        const relLeft = btnRect.left - stageRect.left + btnRect.width / 2;
         startLeft = `${Math.max(30, Math.min(stageRect.width - 30, relLeft))}px`;
       }
     }
@@ -957,7 +1226,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     floatingReactionsStage.appendChild(bubble);
 
-    // Remove element after ~1 second (1000ms) to avoid DOM clutter
     setTimeout(() => {
       if (bubble.parentNode) {
         bubble.parentNode.removeChild(bubble);
@@ -965,378 +1233,37 @@ document.addEventListener('DOMContentLoaded', () => {
     }, 1000);
   }
 
-  // Clickable reaction buttons near shared counters
   const reactionTriggerBtns = document.querySelectorAll('.reaction-trigger-btn');
   reactionTriggerBtns.forEach((btn) => {
     btn.addEventListener('click', () => {
       const emoji = btn.getAttribute('data-emoji') || '❤️';
       const name = btn.getAttribute('data-name') || 'Reaction';
 
-      // 1. Show immediate local floating pop-up animation
       triggerReactionAnimation(emoji, 'You', btn);
-
-      // 2. Broadcast ephemeral reaction to other members in the room
       sync.sendReaction(emoji);
       addLog(`${emoji} You reacted with ${name}!`);
     });
   });
 
-  // Subscribe to real-time reactions from other room members
   sync.onReaction(({ emoji, displayName }) => {
     const who = displayName || 'Member';
     triggerReactionAnimation(emoji, who);
     addLog(`${emoji} ${who} reacted with ${emoji}!`);
   });
 
-  // Interactive Reaction Cards (legacy support)
-  reactionCards.forEach((card) => {
-    card.addEventListener('click', () => {
-      const emoji = card.getAttribute('data-emoji') || '✨';
-      triggerReactionAnimation(emoji, 'You');
-      sync.sendReaction(emoji);
-      addLog(`${emoji} Reaction stamped by you in ${sync.getRoom() || 'room'}!`);
-      card.style.transform = 'scale(0.95)';
-      setTimeout(() => { card.style.transform = ''; }, 150);
-    });
-  });
-
-  // ==========================================
-  // Navigation Tabs: Notes vs Discussions
-  // ==========================================
-  if (tabBtnNotes && tabBtnDiscussions) {
-    tabBtnNotes.addEventListener('click', () => {
-      tabBtnNotes.classList.add('active');
-      tabBtnDiscussions.classList.remove('active');
-      if (notesTabContent) notesTabContent.style.display = 'block';
-      if (discussionsTabContent) discussionsTabContent.style.display = 'none';
-    });
-
-    tabBtnDiscussions.addEventListener('click', () => {
-      tabBtnDiscussions.classList.add('active');
-      tabBtnNotes.classList.remove('active');
-      if (notesTabContent) notesTabContent.style.display = 'none';
-      if (discussionsTabContent) discussionsTabContent.style.display = 'flex';
-      scrollDiscussionsToBottom();
+  if (refreshStateBtn) {
+    refreshStateBtn.addEventListener('click', () => {
+      sync.getState((res) => {
+        if (res && res.success) {
+          renderState(res.state);
+          addLog(`🔄 State snapshot fetched from server (v${res.state.version}).`);
+        }
+      });
     });
   }
 
   // ==========================================
-  // Stored Room Discussions (SQLite Database)
-  // ==========================================
-  function renderDiscussionsList(discussions) {
-    if (!discussionsFeedList) return;
-    const list = Array.isArray(discussions) ? discussions : [];
-
-    if (discussionsCountBadge) {
-      discussionsCountBadge.textContent = list.length;
-    }
-
-    if (list.length === 0) {
-      discussionsFeedList.innerHTML = `
-        <div id="discussions-empty-state" class="discussions-empty-card">
-          <span class="empty-icon">💬</span>
-          <h4 class="empty-title">No Discussions in This Room Yet</h4>
-          <p class="empty-desc">Share discussion points, ideas, or feedback. All room discussions are permanently stored in the SQLite database.</p>
-        </div>
-      `;
-      return;
-    }
-
-    discussionsFeedList.innerHTML = '';
-    list.forEach((item) => {
-      const isMe = item.sessionId === sync.getSessionId();
-      const color = item.authorColor || SyncKit.getUserColor(item.sessionId);
-
-      const msgCard = document.createElement('div');
-      msgCard.className = `discussion-msg-card ${isMe ? 'is-me' : ''}`;
-      msgCard.innerHTML = `
-        <div class="msg-header">
-          <span class="msg-author-dot" style="background-color: ${color};"></span>
-          <span class="msg-author-name">${escapeHtml(item.authorName || 'Anonymous')}</span>
-          ${isMe ? '<span class="note-you-pill">You</span>' : ''}
-          <span class="msg-time">${formatRelativeTime(item.createdAt)}</span>
-        </div>
-        <div class="msg-content">${escapeHtml(item.message)}</div>
-      `;
-      discussionsFeedList.appendChild(msgCard);
-    });
-
-    scrollDiscussionsToBottom();
-  }
-
-  function scrollDiscussionsToBottom() {
-    if (discussionsFeedList) {
-      setTimeout(() => {
-        discussionsFeedList.scrollTop = discussionsFeedList.scrollHeight;
-      }, 50);
-    }
-  }
-
-  function handleSendDiscussion() {
-    if (!discussionInput) return;
-    const msg = discussionInput.value.trim();
-    if (!msg) return;
-
-    discussionInput.value = '';
-    sync.sendDiscussion(msg, (res) => {
-      if (res && res.success) {
-        addLog(`💬 Saved discussion to SQLite database.`);
-      } else {
-        alert(res?.error || 'Failed to save discussion message.');
-      }
-    });
-  }
-
-  if (sendDiscussionBtn) {
-    sendDiscussionBtn.addEventListener('click', handleSendDiscussion);
-  }
-  if (discussionInput) {
-    discussionInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') handleSendDiscussion();
-    });
-  }
-
-  // Subscribe to real-time incoming discussions (stored in SQLite)
-  sync.onDiscussion((newMsg) => {
-    renderDiscussionsList(sync.getDiscussions());
-    addLog(`💬 New discussion from ${newMsg.authorName || 'member'} (saved to DB).`);
-  });
-
-  // ==========================================
-  // Interactive Collaborative Whiteboard (Pen & Eraser)
-  // ==========================================
-  let wbCtx = null;
-  let isDrawing = false;
-  let lastWbX = 0;
-  let lastWbY = 0;
-  let currentTool = 'pen'; // 'pen' | 'eraser'
-  let currentColor = '#ef4444';
-  let currentSize = 4;
-
-  function initWhiteboard() {
-    if (!whiteboardCanvas || !canvasViewport) return;
-
-    function resizeCanvas() {
-      const rect = canvasViewport.getBoundingClientRect();
-      if (rect.width === 0 || rect.height === 0) return;
-
-      const dpr = window.devicePixelRatio || 1;
-      whiteboardCanvas.width = Math.floor(rect.width * dpr);
-      whiteboardCanvas.height = Math.floor(rect.height * dpr);
-      whiteboardCanvas.style.width = `${rect.width}px`;
-      whiteboardCanvas.style.height = `${rect.height}px`;
-
-      wbCtx = whiteboardCanvas.getContext('2d');
-      wbCtx.scale(dpr, dpr);
-      wbCtx.lineCap = 'round';
-      wbCtx.lineJoin = 'round';
-
-      redrawAllWhiteboardStrokes(sync.getWhiteboardStrokes());
-    }
-
-    resizeCanvas();
-    window.addEventListener('resize', resizeCanvas);
-  }
-
-  function clearLocalCanvas() {
-    if (!whiteboardCanvas || !wbCtx) return;
-    wbCtx.save();
-    wbCtx.setTransform(1, 0, 0, 1, 0, 0);
-    wbCtx.clearRect(0, 0, whiteboardCanvas.width, whiteboardCanvas.height);
-    wbCtx.restore();
-  }
-
-  function drawWhiteboardLine(x0, y0, x1, y1, color, size, tool) {
-    if (!wbCtx || !whiteboardCanvas) return;
-    wbCtx.save();
-    if (tool === 'eraser') {
-      wbCtx.globalCompositeOperation = 'destination-out';
-      wbCtx.lineWidth = (size || 4) * 3.5; // Eraser radius is wider
-    } else {
-      wbCtx.globalCompositeOperation = 'source-over';
-      wbCtx.strokeStyle = color || '#ef4444';
-      wbCtx.lineWidth = size || 4;
-    }
-    wbCtx.beginPath();
-    wbCtx.moveTo(x0, y0);
-    wbCtx.lineTo(x1, y1);
-    wbCtx.stroke();
-    wbCtx.restore();
-  }
-
-  function redrawAllWhiteboardStrokes(strokes) {
-    clearLocalCanvas();
-    if (!Array.isArray(strokes) || strokes.length === 0 || !canvasViewport) return;
-    const rect = canvasViewport.getBoundingClientRect();
-    const w = rect.width || 400;
-    const h = rect.height || 350;
-
-    strokes.forEach((s) => {
-      const x0 = typeof s.pctX0 === 'number' ? s.pctX0 * w : s.x0;
-      const y0 = typeof s.pctY0 === 'number' ? s.pctY0 * h : s.y0;
-      const x1 = typeof s.pctX1 === 'number' ? s.pctX1 * w : s.x1;
-      const y1 = typeof s.pctY1 === 'number' ? s.pctY1 * h : s.y1;
-      drawWhiteboardLine(x0, y0, x1, y1, s.color, s.size, s.tool);
-    });
-  }
-
-  function getCanvasRelativeCoords(e) {
-    if (!whiteboardCanvas) return { x: 0, y: 0, width: 1, height: 1 };
-    const rect = whiteboardCanvas.getBoundingClientRect();
-    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-    return {
-      x: Math.round(clientX - rect.left),
-      y: Math.round(clientY - rect.top),
-      width: rect.width,
-      height: rect.height,
-    };
-  }
-
-  if (whiteboardCanvas) {
-    const handleStartDraw = (e) => {
-      e.preventDefault();
-      isDrawing = true;
-      const coords = getCanvasRelativeCoords(e);
-      lastWbX = coords.x;
-      lastWbY = coords.y;
-
-      // Draw single point
-      drawWhiteboardLine(lastWbX, lastWbY, lastWbX + 0.5, lastWbY + 0.5, currentColor, currentSize, currentTool);
-      const stroke = {
-        x0: lastWbX,
-        y0: lastWbY,
-        x1: lastWbX + 0.5,
-        y1: lastWbY + 0.5,
-        pctX0: coords.width > 0 ? lastWbX / coords.width : 0,
-        pctY0: coords.height > 0 ? lastWbY / coords.height : 0,
-        pctX1: coords.width > 0 ? (lastWbX + 0.5) / coords.width : 0,
-        pctY1: coords.height > 0 ? (lastWbY + 0.5) / coords.height : 0,
-        color: currentColor,
-        size: currentSize,
-        tool: currentTool,
-      };
-      sync.sendDrawStroke(stroke);
-    };
-
-    const handleMoveDraw = (e) => {
-      if (!isDrawing) return;
-      e.preventDefault();
-      const coords = getCanvasRelativeCoords(e);
-      const currX = coords.x;
-      const currY = coords.y;
-
-      drawWhiteboardLine(lastWbX, lastWbY, currX, currY, currentColor, currentSize, currentTool);
-      const stroke = {
-        x0: lastWbX,
-        y0: lastWbY,
-        x1: currX,
-        y1: currY,
-        pctX0: coords.width > 0 ? lastWbX / coords.width : 0,
-        pctY0: coords.height > 0 ? lastWbY / coords.height : 0,
-        pctX1: coords.width > 0 ? currX / coords.width : 0,
-        pctY1: coords.height > 0 ? currY / coords.height : 0,
-        color: currentColor,
-        size: currentSize,
-        tool: currentTool,
-      };
-      sync.sendDrawStroke(stroke);
-      lastWbX = currX;
-      lastWbY = currY;
-    };
-
-    const handleEndDraw = () => {
-      isDrawing = false;
-    };
-
-    whiteboardCanvas.addEventListener('mousedown', handleStartDraw);
-    whiteboardCanvas.addEventListener('mousemove', handleMoveDraw);
-    window.addEventListener('mouseup', handleEndDraw);
-
-    whiteboardCanvas.addEventListener('touchstart', handleStartDraw, { passive: false });
-    whiteboardCanvas.addEventListener('touchmove', handleMoveDraw, { passive: false });
-    window.addEventListener('touchend', handleEndDraw);
-  }
-
-  // Whiteboard Tools: Pen & Eraser
-  if (wbToolPen) {
-    wbToolPen.addEventListener('click', () => {
-      currentTool = 'pen';
-      wbToolPen.classList.add('active');
-      if (wbToolEraser) wbToolEraser.classList.remove('active');
-    });
-  }
-
-  if (wbToolEraser) {
-    wbToolEraser.addEventListener('click', () => {
-      currentTool = 'eraser';
-      wbToolEraser.classList.add('active');
-      if (wbToolPen) wbToolPen.classList.remove('active');
-    });
-  }
-
-  // Whiteboard Color Palette
-  wbColorDots.forEach((dot) => {
-    dot.addEventListener('click', () => {
-      const color = dot.getAttribute('data-color');
-      if (color) {
-        currentColor = color;
-        currentTool = 'pen';
-        if (wbToolPen) wbToolPen.classList.add('active');
-        if (wbToolEraser) wbToolEraser.classList.remove('active');
-        wbColorDots.forEach((d) => d.classList.remove('active'));
-        dot.classList.add('active');
-      }
-    });
-  });
-
-  // Whiteboard Stroke Sizes
-  wbSizeBtns.forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const size = Number(btn.getAttribute('data-size'));
-      if (size) {
-        currentSize = size;
-        wbSizeBtns.forEach((b) => b.classList.remove('active'));
-        btn.classList.add('active');
-      }
-    });
-  });
-
-  // Clear Whiteboard Button
-  if (wbClearBtn) {
-    wbClearBtn.addEventListener('click', () => {
-      if (confirm('Clear collaborative whiteboard canvas for all room members?')) {
-        clearLocalCanvas();
-        sync.clearWhiteboard(() => {
-          addLog('🗑️ Cleared collaborative whiteboard.');
-        });
-      }
-    });
-  }
-
-  // Listen to remote drawing strokes
-  sync.onDrawStroke((stroke) => {
-    if (!canvasViewport) return;
-    const rect = canvasViewport.getBoundingClientRect();
-    const w = rect.width || 400;
-    const h = rect.height || 350;
-    const x0 = typeof stroke.pctX0 === 'number' ? stroke.pctX0 * w : stroke.x0;
-    const y0 = typeof stroke.pctY0 === 'number' ? stroke.pctY0 * h : stroke.y0;
-    const x1 = typeof stroke.pctX1 === 'number' ? stroke.pctX1 * w : stroke.x1;
-    const y1 = typeof stroke.pctY1 === 'number' ? stroke.pctY1 * h : stroke.y1;
-    drawWhiteboardLine(x0, y0, x1, y1, stroke.color, stroke.size, stroke.tool);
-  });
-
-  // Listen to remote whiteboard clear
-  sync.onWhiteboardClear(() => {
-    clearLocalCanvas();
-    addLog('🧹 Whiteboard canvas cleared by room member.');
-  });
-
-  initWhiteboard();
-
-  // ==========================================
-  // 10. Shareable Invite Modal & Link
+  // 12. Shareable Invite Modal & Link
   // ==========================================
   function showToast(message) {
     if (!inviteToast) return;
@@ -1363,13 +1290,8 @@ document.addEventListener('DOMContentLoaded', () => {
     if (inviteModal) inviteModal.style.display = 'none';
   }
 
-  if (inviteBtn) {
-    inviteBtn.addEventListener('click', openInviteModal);
-  }
-
-  if (closeInviteBtn) {
-    closeInviteBtn.addEventListener('click', closeInviteModal);
-  }
+  if (inviteBtn) inviteBtn.addEventListener('click', openInviteModal);
+  if (closeInviteBtn) closeInviteBtn.addEventListener('click', closeInviteModal);
 
   if (inviteModal) {
     inviteModal.addEventListener('click', (e) => {
@@ -1377,7 +1299,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Copy Invite Link with graceful fallback
   if (copyInviteBtn) {
     copyInviteBtn.addEventListener('click', async () => {
       const currentRoom = sync.getRoom() || roomInput.value.trim() || 'room-1';
@@ -1385,7 +1306,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
       let copySuccess = false;
 
-      // 1. Modern Clipboard API
       if (navigator.clipboard && navigator.clipboard.writeText) {
         try {
           await navigator.clipboard.writeText(linkToCopy);
@@ -1395,7 +1315,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       }
 
-      // 2. Fallback to select & execCommand
       if (!copySuccess && inviteLinkInput) {
         try {
           inviteLinkInput.select();
@@ -1423,6 +1342,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Auto-join initial room specified in URL or default
+  // Auto-join initial room
   handleJoinRoom(initialRoom);
 });

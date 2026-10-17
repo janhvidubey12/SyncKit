@@ -1,15 +1,17 @@
 /**
  * SyncKit - Reusable Client Library
  * A lightweight, beginner-friendly library to make webpages multiplayer.
- * Encapsulates all Socket.IO networking, state-synchronization, and presence internally.
+ * Encapsulates all Socket.IO networking, state-synchronization, presence,
+ * collaborative whiteboard, and multi-member notes internally.
  */
 
 class SyncKit {
   /**
    * @param {Object} [options]
    * @param {string} [options.serverUrl] Optional server URL (defaults to window.location.origin)
-   * @param {string} [options.displayName] Optional custom user display name (Requirement 2)
-   * @param {string} [options.sessionId] Optional session identifier (Requirement 1)
+   * @param {string} [options.displayName] Optional custom user display name
+   * @param {string} [options.sessionId] Optional session identifier
+   * @param {string} [options.authorKey] Optional stable author token
    * @param {boolean} [options.autoConnect=true] Automatically initiate connection on creation
    */
   constructor(options = {}) {
@@ -19,31 +21,36 @@ class SyncKit {
       (typeof window !== 'undefined' && window.location ? window.location.origin : 'http://localhost:3000');
     this.autoConnect = options.autoConnect !== false;
 
-    // 2. Session Identity & Display Name (Requirement 1 & 2)
+    // 2. Session Identity & Display Name
     this.sessionId = options.sessionId || this._getOrCreateSessionId();
     this.displayName = options.displayName || `User-${this.sessionId.slice(-4)}`;
+    this.authorKey = options.authorKey || this._getOrCreateAuthorKey();
 
     // 3. Internal networking & connection state
     this.socket = null;
     this.status = 'disconnected'; // 'connected' | 'disconnected' | 'reconnecting' | 'reconnected'
     this.hasConnectedOnce = false;
     this.isReconnecting = false;
+    this.isLocalEditing = false; // Prevents background sync from overwriting active user typing
 
-    // 4. Room, State & Presence Store (Requirement 3, 6, 9)
+    // 4. Room, State, Whiteboard & Presence Store
     this.currentRoom = null;
     this.state = {};
-    this.presenceList = []; // Array of currently online users in the room
-    this.discussions = []; // Stored room discussions from database
-    this.whiteboardStrokes = []; // Stored whiteboard strokes
+    this.presenceList = [];
+    this.whiteboard = [];
+    this.whiteboardVersion = 1;
 
-    // 5. Cursor Tracking & Throttling (Requirement 6 & 7)
+    // 5. Cursor Tracking & Throttling
     this.cursorThrottleMs = options.cursorThrottleMs || 30; // ~33fps limit
     this._lastCursorTime = 0;
     this._cursorThrottleTimer = null;
     this._pendingCursor = null;
     this._pendingJoinCallback = null;
 
-    // 6. Public Event Subscriptions
+    // 6. Background 7-second Sync Interval (Feature 1)
+    this._syncInterval = null;
+
+    // 7. Public Event Subscriptions
     this._listeners = {
       statusChange: [],
       stateChange: [],
@@ -53,10 +60,16 @@ class SyncKit {
       userJoined: [],
       userLeft: [],
       reaction: [],
-      discussion: [],
-      drawStroke: [],
-      whiteboardClear: [],
+      whiteboardStroke: [],
+      whiteboardCleared: [],
+      whiteboardUpdated: [],
     };
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('beforeunload', () => {
+        this._stopSyncInterval();
+      });
+    }
 
     if (this.autoConnect) {
       this.connect();
@@ -69,7 +82,6 @@ class SyncKit {
 
   /**
    * Connect to the SyncKit real-time server
-   * Avoids duplicate listeners by reusing existing socket instance (Requirement 8)
    */
   connect() {
     const ioFn =
@@ -86,7 +98,6 @@ class SyncKit {
       return this;
     }
 
-    // Reuse existing socket to avoid duplicate listeners (Requirement 8)
     if (this.socket) {
       if (!this.socket.connected) {
         this._setStatus('reconnecting');
@@ -99,7 +110,6 @@ class SyncKit {
       this._setStatus('reconnecting');
     }
 
-    // Create Socket.IO socket instance with automatic reconnection options (Requirement 2)
     this.socket = ioFn(this.serverUrl, {
       reconnection: true,
       reconnectionAttempts: Infinity,
@@ -116,6 +126,8 @@ class SyncKit {
    * Disconnect from the server manually
    */
   disconnect() {
+    this._stopSyncInterval();
+
     if (this._cursorThrottleTimer) {
       clearTimeout(this._cursorThrottleTimer);
       this._cursorThrottleTimer = null;
@@ -129,13 +141,12 @@ class SyncKit {
     return this;
   }
 
-
   // ==========================================
   // Public API: Rooms & State
   // ==========================================
 
   /**
-   * Join a named room and receive its authoritative state & presence (Requirement 3 & 4)
+   * Join a named room and receive its authoritative state & presence
    * @param {string} roomId Name of the room to join
    * @param {Function} [callback] Optional callback receiving server acknowledgment
    */
@@ -147,6 +158,7 @@ class SyncKit {
       return this;
     }
 
+    this._stopSyncInterval();
     this.currentRoom = roomId.trim();
 
     if (!this.isConnected()) {
@@ -163,65 +175,105 @@ class SyncKit {
         roomId: this.currentRoom,
         sessionId: this.sessionId,
         displayName: this.displayName,
+        authorKey: this.authorKey,
       },
-      (res) => {
-        if (typeof callback === 'function') callback(res);
+      (response) => {
+        if (response && response.success) {
+          this.state = response.state || {};
+          this.whiteboard = response.whiteboard || [];
+          this.whiteboardVersion = response.whiteboardVersion || 1;
+          this.presenceList = Array.isArray(response.presence)
+            ? response.presence
+            : Object.values(response.presence || {});
+
+          this._emitStateChange(this.state, {
+            version: this.state.version,
+            recovered: Boolean(this.isReconnecting),
+            wasReset: Boolean(response.isNewRoom && this.isReconnecting),
+            roomId: this.currentRoom,
+          });
+          this._emitPresenceChange(this.presenceList);
+          this._startSyncInterval();
+        } else if (response && !response.success) {
+          this._emitError('JOIN_FAILED', response.error || 'Failed to join room');
+        }
+        if (typeof callback === 'function') callback(response);
       }
     );
 
     return this;
   }
 
-
   /**
-   * Get the current room state
+   * Get the current room name
    */
-  getState(callback) {
-    if (!callback) {
-      return { ...this.state };
-    }
-
-    if (!this.currentRoom || !this.isConnected()) {
-      callback({ success: false, error: 'Not currently connected to a room' });
-      return this;
-    }
-
-    this.socket.emit('get-state', { roomId: this.currentRoom }, (res) => {
-      if (res && res.success) {
-        this.state = res.state;
-      }
-      callback(res);
-    });
-
-    return this;
+  getRoom() {
+    return this.currentRoom;
   }
 
   /**
-   * Request a state update from the authoritative server
-   * @param {Object} updates Key-value updates
-   * @param {Function} [callback]
+   * Read the local authoritative state snapshot
+   */
+  getState(callback) {
+    if (typeof callback === 'function') {
+      if (this.isConnected() && this.currentRoom) {
+        this.socket.emit('get-state', { roomId: this.currentRoom }, (res) => {
+          if (res && res.success) {
+            this.state = res.state;
+          }
+          callback(res);
+        });
+      } else {
+        callback({ success: false, error: 'Not connected to room', state: { ...this.state } });
+      }
+      return this;
+    }
+    return { ...this.state };
+  }
+
+  /**
+   * Request a state update
+   * @param {Object} updates Key-value updates to merge into server authoritative state
+   * @param {Function} [callback] Optional callback with server acknowledgment
    */
   updateState(updates, callback) {
+    if (!this.isConnected()) {
+      const err = 'Cannot update state: Client is currently disconnected.';
+      this._emitError('NOT_CONNECTED', err);
+      if (typeof callback === 'function') callback({ success: false, error: err });
+      return this;
+    }
+
     if (!this.currentRoom) {
-      const err = 'Cannot update state: You must call joinRoom(roomId) first.';
+      const err = 'Cannot update state: You have not joined a room yet.';
       this._emitError('NOT_IN_ROOM', err);
       if (typeof callback === 'function') callback({ success: false, error: err });
       return this;
     }
 
-    if (!this.isConnected()) {
-      const err = 'Cannot update state: Disconnected from server.';
-      this._emitError('DISCONNECTED', err);
+    if (!updates || typeof updates !== 'object') {
+      const err = 'State update must be an object.';
+      this._emitError('INVALID_STATE_UPDATE', err);
       if (typeof callback === 'function') callback({ success: false, error: err });
       return this;
     }
 
-    this.socket.emit('update-state', { roomId: this.currentRoom, updates }, (res) => {
-      if (res && res.success && res.state) {
-        this.state = res.state;
+    this.socket.emit(
+      'update-state',
+      {
+        roomId: this.currentRoom,
+        updates,
+        authorKey: this.authorKey,
+      },
+      (response) => {
+        if (response && response.success) {
+          this.state = response.state;
+        } else if (response && !response.success) {
+          this._emitError('UPDATE_FAILED', response.error);
+        }
+        if (typeof callback === 'function') callback(response);
       }
-      if (typeof callback === 'function') callback(res);
-    });
+    );
 
     return this;
   }
@@ -230,114 +282,119 @@ class SyncKit {
     return this.updateState(updates, callback);
   }
 
-  /**
-   * Get the current room notes (single string)
-   * @returns {string}
-   */
-  getNotes() {
-    if (this.state.notes || this.state.text) {
-      return this.state.notes || this.state.text;
-    }
-    if (Array.isArray(this.state.notesList) && this.state.notesList.length > 0) {
-      return this.state.notesList.map((n) => n.content).join('\n\n');
-    }
-    return '';
-  }
+  // ==========================================
+  // Public API: Multi-Member Shared Notes & Permissions
+  // ==========================================
 
-  /**
-   * Get the collection of individual member notes in this room
-   * @returns {Array<Object>}
-   */
   getNotesList() {
     return Array.isArray(this.state.notesList) ? [...this.state.notesList] : [];
   }
 
+  getNotes() {
+    if (Array.isArray(this.state.notesList) && this.state.notesList.length > 0) {
+      return this.state.notesList.map((n) => n.content).join('\n\n');
+    }
+    return this.state.notes || this.state.text || '';
+  }
+
   /**
-   * Create a new note belonging to this member in the current room
-   * @param {{ title?: string, content: string, editable?: boolean }} noteData
+   * Create a new note in the room
+   * @param {Object|string} noteData Note content or object with title, content, permission
    * @param {Function} [callback]
    */
-  createNote(noteData, callback) {
-    const title = typeof noteData === 'object' && noteData.title ? String(noteData.title).trim().slice(0, 80) : '';
-    const content = typeof noteData === 'object' ? String(noteData.content || '').slice(0, 15000) : String(noteData || '').slice(0, 15000);
-    // Allow author to decide if their note can be edited by others (default: true)
-    const editable = typeof noteData === 'object' && noteData.editable !== undefined ? Boolean(noteData.editable) : true;
+  createNote(noteData = {}, callback) {
+    const title = typeof noteData === 'string' ? '' : String(noteData.title || '').slice(0, 200);
+    const content = typeof noteData === 'string' ? noteData : String(noteData.content || '').slice(0, 50000);
+    const permission = noteData.permission === 'private' ? 'private' : 'public';
 
     const newNote = {
-      id: `note_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      id: noteData.id || `note_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      roomId: this.currentRoom,
+      title,
+      content,
       authorId: this.sessionId,
       authorName: this.displayName || 'Member',
       authorColor: this.getUserColor(),
-      title: title,
-      content: content,
-      editable: editable,
+      permission,
+      authorKey: this.authorKey,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       updatedBy: this.displayName || 'Member',
     };
 
-    const currentList = Array.isArray(this.state.notesList) ? [...this.state.notesList] : [];
-    const updatedList = [newNote, ...currentList];
-    const serializedNotes = updatedList.map((n) => n.content).join('\n\n');
+    if (this.socket && this.socket.connected && this.currentRoom) {
+      this.socket.emit(
+        'note-create',
+        {
+          roomId: this.currentRoom,
+          note: newNote,
+          authorKey: this.authorKey,
+        },
+        (res) => {
+          if (typeof callback === 'function') callback(res);
+        }
+      );
+      return this;
+    }
 
+    // Fallback via updateState
+    const currentList = Array.isArray(this.state.notesList) ? [...this.state.notesList] : [];
+    currentList.push(newNote);
+    const serializedNotes = currentList.map((n) => n.content).join('\n\n');
     return this.updateState({
-      notesList: updatedList,
-      notes: serializedNotes || content,
-      text: serializedNotes || content,
+      notesList: currentList,
+      notes: serializedNotes,
+      text: serializedNotes,
     }, callback);
   }
 
   /**
-   * Edit an existing note in the current room
-   * Enforces author lock if editable is set to false.
+   * Edit note title, content, or permission
    * @param {string} noteId
-   * @param {string|{ title?: string, content?: string, editable?: boolean }} updates
+   * @param {Object|string} updates
    * @param {Function} [callback]
    */
   editNote(noteId, updates, callback) {
+    const formattedUpdates =
+      typeof updates === 'string' ? { content: updates } : (typeof updates === 'object' && updates !== null ? updates : {});
+
+    if (this.socket && this.socket.connected && this.currentRoom) {
+      this.socket.emit(
+        'note-update',
+        {
+          roomId: this.currentRoom,
+          noteId,
+          updates: formattedUpdates,
+          authorKey: this.authorKey,
+        },
+        (res) => {
+          if (typeof callback === 'function') callback(res);
+        }
+      );
+      return this;
+    }
+
+    // Fallback
     const currentList = Array.isArray(this.state.notesList) ? [...this.state.notesList] : [];
     const noteIndex = currentList.findIndex((n) => n.id === noteId);
-
     if (noteIndex === -1) {
-      const err = `Note "${noteId}" not found.`;
-      if (typeof callback === 'function') callback({ success: false, error: err });
+      if (typeof callback === 'function') callback({ success: false, error: 'Note not found' });
       return this;
     }
-
     const existing = currentList[noteIndex];
-    const isAuthor = existing.authorId === this.sessionId;
-    const isEditable = existing.editable !== false;
-
-    // Strict Permission check: If locked and caller is not the author, reject edit
-    if (!isEditable && !isAuthor) {
-      const err = `This note has been locked by ${existing.authorName || 'its author'} and cannot be edited by other members.`;
-      this._emitError('NOTE_LOCKED', err);
-      if (typeof callback === 'function') callback({ success: false, error: err });
-      return this;
-    }
-
-    const newContent = typeof updates === 'string'
-      ? updates.slice(0, 15000)
-      : (updates.content !== undefined ? String(updates.content).slice(0, 15000) : existing.content);
-    const newTitle = typeof updates === 'object' && updates.title !== undefined
-      ? String(updates.title).slice(0, 80)
-      : existing.title;
-    // Only author can toggle editable permission
-    const newEditable = isAuthor && typeof updates === 'object' && updates.editable !== undefined
-      ? Boolean(updates.editable)
-      : (existing.editable !== false);
+    const newContent = formattedUpdates.content !== undefined ? formattedUpdates.content : existing.content;
+    const newTitle = formattedUpdates.title !== undefined ? formattedUpdates.title : existing.title;
+    const newPerm = formattedUpdates.permission !== undefined ? formattedUpdates.permission : existing.permission;
 
     currentList[noteIndex] = {
       ...existing,
       title: newTitle,
       content: newContent,
-      editable: newEditable,
+      permission: newPerm,
       updatedAt: new Date().toISOString(),
       updatedBy: this.displayName || 'Member',
     };
-
     const serializedNotes = currentList.map((n) => n.content).join('\n\n');
-
     return this.updateState({
       notesList: currentList,
       notes: serializedNotes,
@@ -346,41 +403,29 @@ class SyncKit {
   }
 
   /**
-   * Toggle note editable lock permission (only permitted by note author)
-   * @param {string} noteId
-   * @param {Function} [callback]
-   */
-  toggleNoteEditable(noteId, callback) {
-    const currentList = Array.isArray(this.state.notesList) ? [...this.state.notesList] : [];
-    const note = currentList.find((n) => n.id === noteId);
-    if (!note) {
-      if (typeof callback === 'function') callback({ success: false, error: 'Note not found' });
-      return this;
-    }
-    const currentEditable = note.editable !== false;
-    return this.editNote(noteId, { editable: !currentEditable }, callback);
-  }
-
-  /**
-   * Delete a note from the current room
-   * Enforces lock if note is locked by another author.
+   * Delete a note from the room
    * @param {string} noteId
    * @param {Function} [callback]
    */
   deleteNote(noteId, callback) {
-    const currentList = Array.isArray(this.state.notesList) ? [...this.state.notesList] : [];
-    const note = currentList.find((n) => n.id === noteId);
-
-    if (note && note.editable === false && note.authorId !== this.sessionId) {
-      const err = `This note has been locked by ${note.authorName || 'its author'} and cannot be deleted by other members.`;
-      this._emitError('NOTE_LOCKED', err);
-      if (typeof callback === 'function') callback({ success: false, error: err });
+    if (this.socket && this.socket.connected && this.currentRoom) {
+      this.socket.emit(
+        'note-delete',
+        {
+          roomId: this.currentRoom,
+          noteId,
+          authorKey: this.authorKey,
+        },
+        (res) => {
+          if (typeof callback === 'function') callback(res);
+        }
+      );
       return this;
     }
 
+    const currentList = Array.isArray(this.state.notesList) ? [...this.state.notesList] : [];
     const updatedList = currentList.filter((n) => n.id !== noteId);
     const serializedNotes = updatedList.map((n) => n.content).join('\n\n');
-
     return this.updateState({
       notesList: updatedList,
       notes: serializedNotes,
@@ -388,56 +433,73 @@ class SyncKit {
     }, callback);
   }
 
-  /**
-   * Update the current room notes in real time
-   * Synchronizes both `notesList`, `notes`, and `text` for complete backward compatibility.
-   * @param {string} content
-   * @param {Function} [callback]
-   */
-  updateNotes(content, callback) {
-    const currentList = Array.isArray(this.state.notesList) ? [...this.state.notesList] : [];
-    if (currentList.length > 0) {
-      currentList[0] = {
-        ...currentList[0],
-        content: String(content || ''),
-        updatedAt: new Date().toISOString(),
-        updatedBy: this.displayName || 'Member',
-      };
-    } else {
-      currentList.push({
-        id: `note_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-        authorId: this.sessionId,
-        authorName: this.displayName || 'Member',
-        authorColor: this.getUserColor(),
-        title: 'Shared Note',
-        content: String(content || ''),
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        updatedBy: this.displayName || 'Member',
-      });
-    }
-
-    return this.updateState({
-      notesList: currentList,
-      notes: content,
-      text: content,
-    }, callback);
+  setNotePermission(noteId, permission, callback) {
+    return this.editNote(noteId, { permission: permission === 'private' ? 'private' : 'public' }, callback);
   }
 
+  updateNotes(content, callback) {
+    return this.createNote({ title: 'Shared Note', content }, callback);
+  }
 
   // ==========================================
-  // Public API: Presence & Identity (Requirement 1, 2, 3, 4)
+  // Public API: Collaborative Whiteboard (Feature 3)
   // ==========================================
 
-  /**
-   * Update the client's display name and notify room members (Requirement 2 & 4)
-   * @param {string} name New display name
-   */
+  sendWhiteboardStroke(stroke, callback) {
+    if (!this.isConnected() || !this.currentRoom || !stroke) return this;
+    this.socket.emit(
+      'whiteboard-draw',
+      {
+        roomId: this.currentRoom,
+        stroke,
+      },
+      callback
+    );
+    return this;
+  }
+
+  clearWhiteboard(callback) {
+    if (!this.isConnected() || !this.currentRoom) return this;
+    this.whiteboard = [];
+    this.socket.emit(
+      'whiteboard-clear',
+      {
+        roomId: this.currentRoom,
+      },
+      callback
+    );
+    return this;
+  }
+
+  undoWhiteboard(callback) {
+    if (!this.isConnected() || !this.currentRoom) return this;
+    this.socket.emit(
+      'whiteboard-undo',
+      {
+        roomId: this.currentRoom,
+      },
+      callback
+    );
+    return this;
+  }
+
+  getWhiteboard(callback) {
+    if (!this.isConnected() || !this.currentRoom) {
+      if (typeof callback === 'function') callback({ strokes: this.whiteboard || [], version: this.whiteboardVersion || 1 });
+      return this;
+    }
+    this.socket.emit('get-whiteboard', { roomId: this.currentRoom }, callback);
+    return this;
+  }
+
+  // ==========================================
+  // Public API: Presence & Identity
+  // ==========================================
+
   setDisplayName(name) {
     if (!name || typeof name !== 'string') return this;
     this.displayName = name.trim().slice(0, 30);
 
-    // If connected in a room, send presence update to server
     if (this.isConnected() && this.currentRoom) {
       this.socket.emit('presence-update', {
         roomId: this.currentRoom,
@@ -447,43 +509,33 @@ class SyncKit {
     return this;
   }
 
-  /**
-   * Get the client's unique session identifier (Requirement 1)
-   */
   getSessionId() {
     return this.sessionId;
   }
 
-  /**
-   * Get the client's current display name (Requirement 2)
-   */
+  getAuthorKey() {
+    return this.authorKey;
+  }
+
   getDisplayName() {
     return this.displayName;
   }
 
-  /**
-   * Get list of currently connected users in the room (Requirement 3)
-   */
   getPresence() {
     return [...this.presenceList];
   }
 
-  /**
-   * Generates a consistent, distinct color for any user identifier (Requirement 4)
-   * @param {string} identifier User sessionId or ID
-   * @returns {string} Hex color code
-   */
   static getUserColor(identifier) {
     const PALETTE = [
+      '#ef4444', // red
       '#38bdf8', // sky blue
-      '#f43f5e', // rose red
+      '#f43f5e', // rose
       '#10b981', // emerald green
       '#fbbf24', // amber yellow
       '#a855f7', // purple
       '#ec4899', // pink
       '#06b6d4', // cyan
       '#f97316', // orange
-      '#8b5cf6', // violet
     ];
     if (!identifier) return PALETTE[0];
     let hash = 0;
@@ -499,18 +551,14 @@ class SyncKit {
     return SyncKit.getUserColor(identifier || this.sessionId);
   }
 
-  /**
-   * Send real-time cursor coordinates
-   * Throttled automatically to avoid flooding the server (Requirement 2 & 7)
-   * Completely separate from shared state (Requirement 6 & 9)
-   * @param {{ x: number, y: number, [key: string]: any }} coords
-   */
+  // ==========================================
+  // Public API: Cursor & Reactions
+  // ==========================================
+
   sendCursor(coords) {
     if (!this.isConnected() || !this.currentRoom || !coords) return this;
 
     const now = Date.now();
-
-    // Throttle check (Requirement 7)
     if (now - this._lastCursorTime < this.cursorThrottleMs) {
       this._pendingCursor = coords;
       if (!this._cursorThrottleTimer) {
@@ -539,10 +587,6 @@ class SyncKit {
     return this;
   }
 
-  /**
-   * Broadcast an ephemeral reaction to other room members (Requirement 4)
-   * @param {string} emoji
-   */
   sendReaction(emoji) {
     if (!this.isConnected() || !this.currentRoom || !emoji) return this;
     this.socket.emit('send-reaction', {
@@ -555,87 +599,7 @@ class SyncKit {
   }
 
   // ==========================================
-  // Public API: Room Discussions (Database Stored)
-  // ==========================================
-
-  /**
-   * Get all loaded discussions for the current room
-   * @returns {Array<Object>}
-   */
-  getDiscussions() {
-    return [...this.discussions];
-  }
-
-  /**
-   * Send a discussion message to be saved into SQLite database and shared across the room
-   * @param {string} message
-   * @param {Function} [callback]
-   */
-  sendDiscussion(message, callback) {
-    if (!message || typeof message !== 'string' || !message.trim()) {
-      if (typeof callback === 'function') callback({ success: false, error: 'Empty message' });
-      return this;
-    }
-
-    if (!this.isConnected() || !this.currentRoom) {
-      if (typeof callback === 'function') callback({ success: false, error: 'Not connected to room' });
-      return this;
-    }
-
-    this.socket.emit('send-discussion', {
-      roomId: this.currentRoom,
-      sessionId: this.sessionId,
-      authorName: this.displayName,
-      authorColor: this.getUserColor(),
-      message: message.trim(),
-    }, (res) => {
-      if (typeof callback === 'function') callback(res);
-    });
-
-    return this;
-  }
-
-  // ==========================================
-  // Public API: Whiteboard Drawing (Pen & Eraser)
-  // ==========================================
-
-  /**
-   * Get loaded whiteboard drawing strokes for room
-   * @returns {Array<Object>}
-   */
-  getWhiteboardStrokes() {
-    return [...this.whiteboardStrokes];
-  }
-
-  /**
-   * Broadcast a drawing stroke (pen or eraser) to room members and save in database
-   * @param {{ x0: number, y0: number, x1: number, y1: number, color: string, size: number, tool: 'pen'|'eraser' }} stroke
-   */
-  sendDrawStroke(stroke) {
-    if (!this.isConnected() || !this.currentRoom || !stroke) return this;
-    this.whiteboardStrokes.push(stroke);
-    this.socket.emit('draw-stroke', {
-      roomId: this.currentRoom,
-      ...stroke,
-    });
-    return this;
-  }
-
-  /**
-   * Clear the collaborative whiteboard for all members in room
-   * @param {Function} [callback]
-   */
-  clearWhiteboard(callback) {
-    if (!this.isConnected() || !this.currentRoom) return this;
-    this.whiteboardStrokes = [];
-    this.socket.emit('clear-whiteboard', { roomId: this.currentRoom });
-    if (typeof callback === 'function') callback({ success: true });
-    return this;
-  }
-
-  // ==========================================
-  // Public API: Subscriptions / Event Listeners
-  // (Avoids duplicate listener entries - Requirement 8)
+  // Public API: Event Subscriptions
   // ==========================================
 
   onStatusChange(callback) {
@@ -659,17 +623,10 @@ class SyncKit {
     };
   }
 
-  /**
-   * Subscribe to room presence changes (Requirement 4 & 8)
-   * @param {Function} callback Receives array of online users [{ sessionId, displayName, ... }]
-   */
   onPresenceChange(callback) {
     if (typeof callback !== 'function') return () => {};
     if (!this._listeners.presenceChange.includes(callback)) {
       this._listeners.presenceChange.push(callback);
-    }
-    if (this.presenceList.length > 0) {
-      callback(this.presenceList);
     }
     return () => {
       this._listeners.presenceChange = this._listeners.presenceChange.filter((cb) => cb !== callback);
@@ -686,10 +643,6 @@ class SyncKit {
     };
   }
 
-  /**
-   * Subscribe to ephemeral room reactions from other members (Requirement 4)
-   * @param {Function} callback Receives { emoji, displayName, sessionId, userId, timestamp }
-   */
   onReaction(callback) {
     if (typeof callback !== 'function') return () => {};
     if (!this._listeners.reaction.includes(callback)) {
@@ -700,45 +653,33 @@ class SyncKit {
     };
   }
 
-  /**
-   * Subscribe to new discussion messages stored in database
-   * @param {Function} callback Receives discussion object
-   */
-  onDiscussion(callback) {
+  onWhiteboardStroke(callback) {
     if (typeof callback !== 'function') return () => {};
-    if (!this._listeners.discussion.includes(callback)) {
-      this._listeners.discussion.push(callback);
+    if (!this._listeners.whiteboardStroke.includes(callback)) {
+      this._listeners.whiteboardStroke.push(callback);
     }
     return () => {
-      this._listeners.discussion = this._listeners.discussion.filter((cb) => cb !== callback);
+      this._listeners.whiteboardStroke = this._listeners.whiteboardStroke.filter((cb) => cb !== callback);
     };
   }
 
-  /**
-   * Subscribe to incoming whiteboard drawing strokes
-   * @param {Function} callback Receives stroke data
-   */
-  onDrawStroke(callback) {
+  onWhiteboardCleared(callback) {
     if (typeof callback !== 'function') return () => {};
-    if (!this._listeners.drawStroke.includes(callback)) {
-      this._listeners.drawStroke.push(callback);
+    if (!this._listeners.whiteboardCleared.includes(callback)) {
+      this._listeners.whiteboardCleared.push(callback);
     }
     return () => {
-      this._listeners.drawStroke = this._listeners.drawStroke.filter((cb) => cb !== callback);
+      this._listeners.whiteboardCleared = this._listeners.whiteboardCleared.filter((cb) => cb !== callback);
     };
   }
 
-  /**
-   * Subscribe to whiteboard canvas clear events
-   * @param {Function} callback
-   */
-  onWhiteboardClear(callback) {
+  onWhiteboardUpdated(callback) {
     if (typeof callback !== 'function') return () => {};
-    if (!this._listeners.whiteboardClear.includes(callback)) {
-      this._listeners.whiteboardClear.push(callback);
+    if (!this._listeners.whiteboardUpdated.includes(callback)) {
+      this._listeners.whiteboardUpdated.push(callback);
     }
     return () => {
-      this._listeners.whiteboardClear = this._listeners.whiteboardClear.filter((cb) => cb !== callback);
+      this._listeners.whiteboardUpdated = this._listeners.whiteboardUpdated.filter((cb) => cb !== callback);
     };
   }
 
@@ -752,10 +693,6 @@ class SyncKit {
     };
   }
 
-  // ==========================================
-  // Getters
-  // ==========================================
-
   isConnected() {
     return Boolean(this.socket && this.socket.connected);
   }
@@ -764,115 +701,145 @@ class SyncKit {
     return this.socket ? this.socket.id : null;
   }
 
-  getRoom() {
-    return this.currentRoom;
+  // ==========================================
+  // Internal Helpers & Background Sync (Feature 1)
+  // ==========================================
+
+  _startSyncInterval() {
+    this._stopSyncInterval();
+    // 7-second background synchronization check (Feature 1)
+    this._syncInterval = setInterval(() => {
+      if (this.isConnected() && this.currentRoom && !this.isLocalEditing) {
+        this.socket.emit('get-state', { roomId: this.currentRoom }, (res) => {
+          if (res && res.success && res.state) {
+            const serverVersion = Number(res.state.version) || 0;
+            const localVersion = Number(this.state.version) || 0;
+            if (serverVersion > localVersion) {
+              this.state = res.state;
+              this._emitStateChange(this.state, {
+                version: serverVersion,
+                recovered: true,
+                backgroundSync: true,
+                roomId: this.currentRoom,
+              });
+            }
+          }
+        });
+      }
+    }, 7000);
   }
 
-  // ==========================================
-  // Internal Helpers & Networking
-  // ==========================================
+  _stopSyncInterval() {
+    if (this._syncInterval) {
+      clearInterval(this._syncInterval);
+      this._syncInterval = null;
+    }
+  }
 
   _getOrCreateSessionId() {
     if (typeof window !== 'undefined' && window.sessionStorage) {
+      let id = window.sessionStorage.getItem('synckit_session_id');
+      if (!id) {
+        id = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+        window.sessionStorage.setItem('synckit_session_id', id);
+      }
+      return id;
+    }
+    return `sess_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+  }
+
+  _getOrCreateAuthorKey() {
+    if (typeof window !== 'undefined' && window.localStorage) {
       try {
-        let id = window.sessionStorage.getItem('synckit:session-id');
-        if (!id) {
-          id = `sess_${Math.random().toString(36).substring(2, 10)}`;
-          window.sessionStorage.setItem('synckit:session-id', id);
+        let key = window.localStorage.getItem('synckit_author_key');
+        if (!key) {
+          key = `auth_${Date.now()}_${Math.random().toString(36).substring(2, 11)}_${Math.random().toString(36).substring(2, 11)}`;
+          window.localStorage.setItem('synckit_author_key', key);
         }
-        return id;
+        return key;
       } catch (e) {
-        // Fallback
+        // Fallback for private browsing
       }
     }
-    return `sess_${Math.random().toString(36).substring(2, 10)}`;
+    return `auth_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
   }
 
   _setupSocketListeners() {
-    // 1. Socket Connected (Initial or Reconnection)
+    if (!this.socket) return;
+
     this.socket.on('connect', () => {
       const isReconnection = this.hasConnectedOnce;
       this.hasConnectedOnce = true;
-
       if (isReconnection) {
-        console.log(`[SyncKit] Reconnected! (New Socket ID: ${this.socket.id})`);
         this.isReconnecting = true;
-
-        // Rejoin room with same sessionId & displayName (Requirement 4 & 6)
-        if (this.currentRoom) {
-          console.log(`[SyncKit] Re-joining room "${this.currentRoom}" and recovering state...`);
-          const pendingCb = this._pendingJoinCallback;
-          this._pendingJoinCallback = null;
-          this.socket.emit(
-            'join-room',
-            {
-              roomId: this.currentRoom,
-              sessionId: this.sessionId,
-              displayName: this.displayName,
-            },
-            (res) => {
-              this.isReconnecting = false;
-              this._setStatus('reconnected', { socketId: this.socket.id, recovered: true });
-              if (typeof pendingCb === 'function') pendingCb(res);
-            }
-          );
-          return;
-        }
-
-        this.isReconnecting = false;
-        this._setStatus('reconnected', { socketId: this.socket.id, recovered: false });
+        this._setStatus('reconnected', { socketId: this.socket.id, recovered: true });
       } else {
-        console.log(`[SyncKit] Connected to server (Socket ID: ${this.socket.id})`);
-        this._setStatus('connected', { socketId: this.socket.id, recovered: false });
+        this._setStatus('connected', { socketId: this.socket.id });
+      }
 
-        if (this.currentRoom) {
-          const pendingCb = this._pendingJoinCallback;
-          this._pendingJoinCallback = null;
-          this.joinRoom(this.currentRoom, pendingCb);
-        }
+      if (this.currentRoom) {
+        this.socket.emit(
+          'join-room',
+          {
+            roomId: this.currentRoom,
+            sessionId: this.sessionId,
+            displayName: this.displayName,
+            authorKey: this.authorKey,
+          },
+          (res) => {
+            if (this._pendingJoinCallback) {
+              const cb = this._pendingJoinCallback;
+              this._pendingJoinCallback = null;
+              cb(res);
+            }
+          }
+        );
       }
     });
 
-
-    // 2. Disconnect (Requirement 1 & 5)
     this.socket.on('disconnect', (reason) => {
-      console.log(`[SyncKit] Disconnected from server (Reason: ${reason})`);
+      this._stopSyncInterval();
       this._setStatus('disconnected', { reason });
+      if (reason === 'io server disconnect' || reason === 'transport close' || reason === 'io client disconnect') {
+        this.isReconnecting = true;
+        this._setStatus('reconnecting');
+      }
     });
 
-    // 3. Reconnection Attempts
-    if (this.socket.io) {
-      this.socket.io.on('reconnect_attempt', (attempt) => {
-        console.log(`[SyncKit] Reconnecting attempt ${attempt}...`);
-        this._setStatus('reconnecting', { attempt });
-      });
-    }
+    this.socket.io.on('reconnect_attempt', (attempt) => {
+      this.isReconnecting = true;
+      this._setStatus('reconnecting', { attempt });
+    });
 
-    // 4. Room State & Presence Broadcasts (Requirement 3, 4, 6, 7)
+    this.socket.io.on('reconnect_failed', () => {
+      this._setStatus('disconnected', { failed: true });
+      this._emitError('RECONNECT_FAILED', 'Failed to reconnect to server.');
+    });
+
+    // Room joined
     this.socket.on('room-joined', (data) => {
       const wasReconnection = this.isReconnecting;
+      this.isReconnecting = false;
       this.currentRoom = data.roomId;
       this.state = data.state || {};
+      this.whiteboard = data.whiteboard || [];
+      this.whiteboardVersion = data.whiteboardVersion || 1;
       this.presenceList = Array.isArray(data.presence) ? data.presence : Object.values(data.presence || {});
-      this.discussions = Array.isArray(data.discussions) ? data.discussions : [];
-      this.whiteboardStrokes = Array.isArray(data.whiteboardStrokes) ? data.whiteboardStrokes : [];
-
-      const wasReset = Boolean(data.isNewRoom && wasReconnection);
-      if (wasReset) {
-        console.warn(`[SyncKit] Notice: Room "${data.roomId}" was initialized fresh on the server.`);
-      }
 
       this._emitStateChange(this.state, {
         version: this.state.version,
         recovered: wasReconnection,
-        wasReset: wasReset,
+        wasReset: Boolean(data.isNewRoom && wasReconnection),
         roomId: this.currentRoom,
       });
 
       this._emitPresenceChange(this.presenceList);
+      this._startSyncInterval();
+
+      this._listeners.whiteboardUpdated.forEach((cb) => cb({ strokes: this.whiteboard || [], version: this.whiteboardVersion }));
     });
 
-    // Full presence list update from server (Requirement 4 & 5)
+    // Presence update
     this.socket.on('presence-update', (data) => {
       if (data.roomId === this.currentRoom) {
         this.presenceList = Array.isArray(data.presence) ? data.presence : Object.values(data.presence || {});
@@ -880,6 +847,7 @@ class SyncKit {
       }
     });
 
+    // State update
     this.socket.on('state-updated', (data) => {
       if (data.roomId === this.currentRoom) {
         this.state = data.state || {};
@@ -892,9 +860,34 @@ class SyncKit {
       }
     });
 
-    // 5. Cursors (Requirement 4 & 5)
+    // Whiteboard events
+    this.socket.on('whiteboard-stroke', (data) => {
+      if (data.roomId === this.currentRoom) {
+        if (!Array.isArray(this.whiteboard)) this.whiteboard = [];
+        this.whiteboard.push(data.stroke);
+        this.whiteboardVersion = data.version;
+        this._listeners.whiteboardStroke.forEach((cb) => cb(data));
+      }
+    });
+
+    this.socket.on('whiteboard-cleared', (data) => {
+      if (data.roomId === this.currentRoom) {
+        this.whiteboard = [];
+        this.whiteboardVersion = data.version;
+        this._listeners.whiteboardCleared.forEach((cb) => cb(data));
+      }
+    });
+
+    this.socket.on('whiteboard-updated', (data) => {
+      if (data.roomId === this.currentRoom) {
+        this.whiteboard = data.strokes || [];
+        this.whiteboardVersion = data.version;
+        this._listeners.whiteboardUpdated.forEach((cb) => cb(data));
+      }
+    });
+
+    // Cursors
     this.socket.on('cursor-moved', (data) => {
-      // Distinct color based on user sessionId (Requirement 4)
       const color = SyncKit.getUserColor(data.sessionId || data.userId);
       const cursorEvent = {
         ...data,
@@ -903,35 +896,12 @@ class SyncKit {
       this._listeners.cursorMove.forEach((cb) => cb(cursorEvent));
     });
 
-    // 6. Ephemeral Room Reactions (Requirement 4)
+    // Ephemeral Reactions
     this.socket.on('reaction-received', (data) => {
       this._listeners.reaction.forEach((cb) => cb(data));
     });
 
-    // 7. Persistent Room Discussions (Stored in SQLite Database)
-    this.socket.on('new-discussion', (data) => {
-      if (data.roomId === this.currentRoom && data.discussion) {
-        this.discussions.push(data.discussion);
-        this._listeners.discussion.forEach((cb) => cb(data.discussion));
-      }
-    });
-
-    // 8. Collaborative Whiteboard Drawing (Pen & Eraser)
-    this.socket.on('draw-stroke', (data) => {
-      if (data.roomId === this.currentRoom) {
-        this.whiteboardStrokes.push(data);
-        this._listeners.drawStroke.forEach((cb) => cb(data));
-      }
-    });
-
-    this.socket.on('whiteboard-cleared', (data) => {
-      if (data.roomId === this.currentRoom) {
-        this.whiteboardStrokes = [];
-        this._listeners.whiteboardClear.forEach((cb) => cb(data));
-      }
-    });
-
-    // 9. Errors
+    // Server Errors
     this.socket.on('synckit:error', (err) => {
       this._emitError(err.code || 'SERVER_ERROR', err.message);
     });

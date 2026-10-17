@@ -13,9 +13,9 @@
     "test:cursor": "node test-cursor-three-tabs.js",
     "test:notes": "node test-notes-and-invite.js",
     "test:reactions": "node test-reactions.js",
-    "test:features": "node test-new-features.js"
+    "test:whiteboard": "node test-whiteboard-and-db.js",
+    "test:regression": "node test-regression-suite.js"
   },
-
   "keywords": [
     "multiplayer",
     "realtime",
@@ -27,6 +27,7 @@
   "license": "MIT",
   "dependencies": {
     "express": "^4.19.2",
+    "pg": "^8.23.1",
     "socket.io": "^4.7.5"
   },
   "devDependencies": {

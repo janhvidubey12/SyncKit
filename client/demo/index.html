@@ -96,138 +96,93 @@
       <button id="dismiss-recovery-btn" class="btn-dismiss" title="Dismiss notice">✕</button>
     </div>
 
+    <!-- Room Error Notification Banner -->
+    <div id="room-error-banner" class="banner banner-error" style="display: none;">
+      <div class="banner-body">
+        <span class="banner-icon">⚠️</span>
+        <span id="room-error-text">
+          <strong>Room Error:</strong> <span id="room-error-message">Invalid room name.</span>
+        </span>
+      </div>
+      <button id="dismiss-room-error-btn" class="btn-dismiss" title="Dismiss error">✕</button>
+    </div>
+
     <!-- Main Workspace Split Pane -->
     <main class="main-workspace">
       <!-- ==========================================
-           LEFT PANEL: Expanded Room Notes & Discussions (with SQLite DB)
+           LEFT PANEL: Wide Collaborative Room Notes
            ========================================== -->
-      <aside class="panel notes-panel expanded-panel">
+      <section class="panel notes-panel wide-notes-panel">
         <div class="panel-header">
           <div class="panel-title-group">
             <span class="panel-icon">📝</span>
             <div>
-              <h2 class="panel-title">Room Notes & Discussions</h2>
-              <div class="panel-sub">Shared among members in <span id="notes-room-badge" class="room-sub-badge">room-1</span></div>
+              <h2 class="panel-title">Room Notes</h2>
+              <div class="panel-sub">Collaborative notes in <span id="notes-room-badge" class="room-sub-badge">room-1</span></div>
             </div>
           </div>
           <div class="notes-header-actions">
             <!-- Sync Indicator -->
             <span id="text-sync-indicator" class="sync-badge synced">● Synced</span>
-          </div>
-        </div>
-
-        <!-- Panel Navigation Tabs: Notes vs Discussions -->
-        <div class="panel-nav-tabs">
-          <button id="tab-btn-notes" class="panel-tab-btn active" data-tab="notes">
-            <span>📝 Room Notes</span>
-            <span id="notes-count-badge" class="badge-mini">0</span>
-          </button>
-          <button id="tab-btn-discussions" class="panel-tab-btn" data-tab="discussions">
-            <span>💬 Room Discussions</span>
-            <span id="discussions-count-badge" class="badge-mini">0</span>
-            <span class="db-pill-mini">SQLite DB</span>
-          </button>
-        </div>
-
-        <!-- TAB 1: Room Notes Section -->
-        <div id="notes-tab-content" class="tab-pane active">
-          <!-- Notes Top Toolbar with "+ Create Note" button -->
-          <div class="notes-top-toolbar">
             <button id="open-create-note-btn" class="btn btn-sm btn-primary">
               <span class="btn-icon">＋</span>
               <span>Create Note</span>
             </button>
-            <div class="notes-stats-row">
-              <span class="collaborative-notice-tag" title="Notes are visible for all members in this room">🌐 Room Shared</span>
-            </div>
-          </div>
-
-          <!-- Inline Note Composer Form with Editable Permission Option -->
-          <div id="new-note-form" class="new-note-card" style="display: none;">
-            <div class="new-note-header">
-              <span class="form-title">✏️ New Note for Room</span>
-              <button id="cancel-create-note-btn" class="btn-icon-close" title="Close">✕</button>
-            </div>
-            <input
-              type="text"
-              id="new-note-title"
-              class="note-input-title"
-              placeholder="Note title (optional)..."
-              maxlength="80"
-            />
-            <textarea
-              id="new-note-content"
-              class="note-textarea-content"
-              placeholder="Write note here... Changes sync instantly to all members in this room."
-              rows="4"
-            ></textarea>
-
-            <!-- Option for members to decide if their note can be edited by others or not -->
-            <div class="note-permission-row">
-              <label class="perm-checkbox-label" for="new-note-editable">
-                <input type="checkbox" id="new-note-editable" checked />
-                <span class="perm-checkbox-custom"></span>
-                <span class="perm-text-group">
-                  <strong class="perm-title">Allow other members to edit this note</strong>
-                  <span class="perm-desc">When unchecked, only you can edit or delete this note</span>
-                </span>
-              </label>
-            </div>
-
-            <div class="new-note-actions">
-              <button id="cancel-note-btn" class="btn btn-xs btn-outline">Cancel</button>
-              <button id="save-note-btn" class="btn btn-xs btn-primary">Post Note</button>
-            </div>
-          </div>
-
-          <!-- Notes Cards List Container -->
-          <div id="notes-cards-list" class="notes-cards-container">
-            <!-- Empty State -->
-            <div id="notes-empty-state" class="notes-empty-card">
-              <span class="empty-icon">📋</span>
-              <h4 class="empty-title">No Notes in This Room</h4>
-              <p class="empty-desc">Click <strong>"Create Note"</strong> above to share a note with all members in this room in real time.</p>
-            </div>
           </div>
         </div>
 
-        <!-- TAB 2: Room Discussions Section (Stored in SQLite Database) -->
-        <div id="discussions-tab-content" class="tab-pane" style="display: none;">
-          <!-- SQLite Database Banner -->
-          <div class="discussions-db-banner">
-            <div class="db-banner-left">
-              <span class="db-icon">💾</span>
-              <div>
-                <div class="db-title">Persistent Room Discussions Database</div>
-                <div class="db-sub">Messages are stored in SQLite database for <span id="discussion-room-badge" class="room-sub-badge">room-1</span></div>
-              </div>
-            </div>
-            <span class="db-status-pill">● SQLite Active</span>
+        <!-- Notes Stats Bar -->
+        <div class="notes-stats-bar">
+          <span id="notes-count-badge" class="badge-subtle">0 notes</span>
+          <span class="collaborative-notice-tag" title="Notes are saved to the persistent database and synchronized across room members">
+            💾 Persistent Database Storage
+          </span>
+        </div>
+
+        <!-- Inline Note Composer Form -->
+        <div id="new-note-form" class="new-note-card" style="display: none;">
+          <div class="new-note-header">
+            <span class="form-title">✏️ Create Note for Room</span>
+            <button id="cancel-create-note-btn" class="btn-icon-close" title="Close">✕</button>
+          </div>
+          <input
+            type="text"
+            id="new-note-title"
+            class="note-input-title"
+            placeholder="Note title (e.g. Architecture Decisions)..."
+            maxlength="100"
+          />
+          <textarea
+            id="new-note-content"
+            class="note-textarea-content"
+            placeholder="Write your note here... Changes save to database and sync live."
+            rows="5"
+          ></textarea>
+
+          <!-- Note Permissions Dropdown (Feature 6) -->
+          <div class="note-permission-row">
+            <label for="new-note-permission" class="perm-label">
+              <span class="perm-icon">🛡️</span> Editing Permission:
+            </label>
+            <select id="new-note-permission" class="permission-select">
+              <option value="public" selected>🌐 Anyone in this room can edit</option>
+              <option value="private">🔒 Only I can edit</option>
+            </select>
           </div>
 
-          <!-- Discussions Message Feed Container -->
-          <div id="discussions-feed-list" class="discussions-feed-container">
-            <div id="discussions-empty-state" class="discussions-empty-card">
-              <span class="empty-icon">💬</span>
-              <h4 class="empty-title">No Discussions in This Room Yet</h4>
-              <p class="empty-desc">Share discussion points, ideas, or feedback. All room discussions are permanently stored in the SQLite database.</p>
-            </div>
+          <div class="new-note-actions">
+            <button id="cancel-note-btn" class="btn btn-xs btn-outline">Cancel</button>
+            <button id="save-note-btn" class="btn btn-xs btn-primary">Save Note</button>
           </div>
+        </div>
 
-          <!-- Discussion Message Composer -->
-          <div class="discussion-composer-box">
-            <input
-              type="text"
-              id="discussion-input"
-              class="discussion-input"
-              placeholder="Write a message to discuss with room members..."
-              maxlength="1000"
-              autocomplete="off"
-            />
-            <button id="send-discussion-btn" class="btn btn-sm btn-primary">
-              <span>Send</span>
-              <span class="btn-icon">➤</span>
-            </button>
+        <!-- Notes Cards List Container (Wide rectangular layout) -->
+        <div id="notes-cards-list" class="notes-cards-container wide-cards-scroll">
+          <!-- Empty State -->
+          <div id="notes-empty-state" class="notes-empty-card">
+            <span class="empty-icon">📋</span>
+            <h4 class="empty-title">No Notes in This Room</h4>
+            <p class="empty-desc">Click <strong>"Create Note"</strong> above to share a note with all room members in real time.</p>
           </div>
         </div>
 
@@ -254,141 +209,127 @@
             <span class="empty-state-text">No other members in room yet. Use Invite to share!</span>
           </div>
         </div>
-
-        <!-- Database Storage Notice -->
-        <div class="storage-notice">
-          <span class="notice-icon">💾</span>
-          <span>Room discussions and whiteboard drawings are persistently stored in the server SQLite database. Room notes sync authoritatively across members.</span>
-        </div>
-      </aside>
+      </section>
 
       <!-- ==========================================
-           RIGHT PANEL: Shrunk Live Collaboration Board with Whiteboard (Pen/Eraser) & Live Reactions
+           RIGHT PANEL: Collaborative Whiteboard & Canvas (Feature 3)
            ========================================== -->
-      <section class="panel collab-panel shrunk-panel">
-        <div class="panel-header">
+      <section class="panel whiteboard-panel">
+        <div class="panel-header whiteboard-panel-header">
           <div class="panel-title-group">
             <span class="panel-icon">🎨</span>
             <div>
-              <h2 class="panel-title">Live Collaboration Board</h2>
-              <div class="panel-sub">Whiteboard (Pen & Eraser) • Live Room Reactions</div>
+              <h2 class="panel-title">Collaborative Whiteboard</h2>
+              <div class="panel-sub">Real-time multiplayer drawing & live pointers</div>
             </div>
           </div>
 
-          <div class="collab-header-actions">
-            <div class="cursor-coords-badge">
-              <span class="coords-icon">🎯</span>
-              <span id="local-cursor-coords">Cursor: X: 0, Y: 0</span>
+          <!-- Top-Right Live Reactions Toolbar (Feature 4) -->
+          <div class="reactions-strip-container">
+            <span class="reactions-label">Reactions:</span>
+            <div class="reactions-bar" id="reactions-bar" role="toolbar" aria-label="Room Reactions">
+              <button class="reaction-trigger-btn" data-emoji="❤️" data-name="Love" title="Love (❤️)" aria-label="React with Love">
+                <span class="reaction-emoji-icon">❤️</span>
+              </button>
+              <button class="reaction-trigger-btn" data-emoji="🔥" data-name="Fire" title="Fire (🔥)" aria-label="React with Fire">
+                <span class="reaction-emoji-icon">🔥</span>
+              </button>
+              <button class="reaction-trigger-btn" data-emoji="😂" data-name="Laugh" title="Laugh (😂)" aria-label="React with Laugh">
+                <span class="reaction-emoji-icon">😂</span>
+              </button>
+              <button class="reaction-trigger-btn" data-emoji="👍" data-name="Like" title="Like (👍)" aria-label="React with Like">
+                <span class="reaction-emoji-icon">👍</span>
+              </button>
+              <button class="reaction-trigger-btn" data-emoji="🎉" data-name="Celebrate" title="Celebrate (🎉)" aria-label="React with Celebrate">
+                <span class="reaction-emoji-icon">🎉</span>
+              </button>
+              <button class="reaction-trigger-btn" data-emoji="⚡" data-name="Wow" title="Wow (⚡)" aria-label="React with Wow">
+                <span class="reaction-emoji-icon">⚡</span>
+              </button>
             </div>
+            <!-- Hidden coordinates element preserved for DOM compatibility -->
+            <span id="local-cursor-coords" style="display: none;"></span>
           </div>
         </div>
 
-        <!-- Whiteboard & Live Reactions Surface -->
-        <div class="collab-surface" id="collab-board">
+        <!-- Whiteboard Controls & Tools Bar -->
+        <div class="whiteboard-toolbar">
+          <!-- Tool selection -->
+          <div class="tool-group">
+            <button id="tool-pen" class="wb-tool-btn active" title="Pen (Draw)" aria-pressed="true">
+              <span class="wb-btn-icon">✏️</span>
+              <span class="wb-btn-label">Pen</span>
+            </button>
+            <button id="tool-eraser" class="wb-tool-btn" title="Eraser" aria-pressed="false">
+              <span class="wb-btn-icon">🧹</span>
+              <span class="wb-btn-label">Eraser</span>
+            </button>
+          </div>
+
+          <div class="wb-sep"></div>
+
+          <!-- Color palette swatches -->
+          <div class="color-palette-group" id="color-palette" title="Drawing Color">
+            <button class="color-swatch active" data-color="#f8fafc" style="background-color: #f8fafc;" title="White"></button>
+            <button class="color-swatch" data-color="#ef4444" style="background-color: #ef4444;" title="Red"></button>
+            <button class="color-swatch" data-color="#dc2626" style="background-color: #dc2626;" title="Crimson"></button>
+            <button class="color-swatch" data-color="#fbbf24" style="background-color: #fbbf24;" title="Yellow"></button>
+            <button class="color-swatch" data-color="#10b981" style="background-color: #10b981;" title="Green"></button>
+            <button class="color-swatch" data-color="#38bdf8" style="background-color: #38bdf8;" title="Sky Blue"></button>
+            <button class="color-swatch" data-color="#a855f7" style="background-color: #a855f7;" title="Purple"></button>
+          </div>
+
+          <div class="wb-sep"></div>
+
+          <!-- Brush size controls -->
+          <div class="size-selector-group">
+            <span class="wb-label">Size:</span>
+            <button class="size-pill" data-size="2" title="Fine line (2px)">2</button>
+            <button class="size-pill active" data-size="5" title="Medium (5px)">5</button>
+            <button class="size-pill" data-size="10" title="Thick (10px)">10</button>
+            <button class="size-pill" data-size="20" title="Marker (20px)">20</button>
+          </div>
+
+          <div class="wb-sep"></div>
+
+          <!-- Undo and Clear Actions -->
+          <div class="wb-actions-group">
+            <button id="undo-btn" class="wb-action-btn disabled" title="Undo last stroke" disabled>
+              <span class="wb-btn-icon">⤺</span>
+              <span>Undo</span>
+            </button>
+            <button id="clear-board-btn" class="wb-action-btn btn-danger-subtle" title="Clear entire whiteboard">
+              <span class="wb-btn-icon">🗑️</span>
+              <span>Clear</span>
+            </button>
+          </div>
+
+          <div class="wb-status-meta">
+            <span id="whiteboard-stroke-count" class="wb-meta-pill">0 strokes</span>
+          </div>
+        </div>
+
+        <!-- Collaborative Surface / Whiteboard Area with HTML5 Canvas -->
+        <div class="collab-surface whiteboard-surface" id="collab-board">
+          <canvas id="whiteboard-canvas"></canvas>
+
           <!-- Remote Cursor Indicators Container -->
           <div id="remote-cursors-layer" class="remote-cursors-layer"></div>
 
           <!-- Floating Reactions Stage Container where animations pop up -->
           <div id="floating-reactions-stage" class="floating-reactions-stage" aria-live="polite"></div>
 
-          <!-- Whiteboard Canvas & Controls Wrapper -->
-          <div class="whiteboard-container">
-            <!-- Whiteboard Toolbar with Pen, Eraser, Colors, Sizes & Clear -->
-            <div class="whiteboard-toolbar">
-              <div class="wb-tool-group">
-                <button id="wb-tool-pen" class="wb-btn active" title="Pen (Draw)">
-                  <span class="wb-icon">✏️</span>
-                  <span class="wb-label">Pen</span>
-                </button>
-                <button id="wb-tool-eraser" class="wb-btn" title="Eraser">
-                  <span class="wb-icon">🧹</span>
-                  <span class="wb-label">Eraser</span>
-                </button>
-              </div>
-
-              <!-- Color Palette -->
-              <div class="wb-colors-group" id="wb-colors-group">
-                <button class="wb-color-dot active" data-color="#ef4444" style="background-color: #ef4444;" title="Red"></button>
-                <button class="wb-color-dot" data-color="#ffffff" style="background-color: #ffffff;" title="White"></button>
-                <button class="wb-color-dot" data-color="#10b981" style="background-color: #10b981;" title="Emerald"></button>
-                <button class="wb-color-dot" data-color="#38bdf8" style="background-color: #38bdf8;" title="Blue"></button>
-                <button class="wb-color-dot" data-color="#fbbf24" style="background-color: #fbbf24;" title="Yellow"></button>
-              </div>
-
-              <!-- Stroke Sizes -->
-              <div class="wb-sizes-group" id="wb-sizes-group">
-                <button class="wb-size-btn" data-size="2" title="Fine (2px)">Thin</button>
-                <button class="wb-size-btn active" data-size="4" title="Medium (4px)">Med</button>
-                <button class="wb-size-btn" data-size="10" title="Thick (10px)">Thick</button>
-              </div>
-
-              <!-- Clear Board Button -->
-              <div class="wb-actions-group">
-                <button id="wb-clear-btn" class="wb-btn wb-clear-btn" title="Clear entire whiteboard canvas">
-                  <span class="wb-icon">🗑️</span>
-                  <span class="wb-label">Clear</span>
-                </button>
-              </div>
-            </div>
-
-            <!-- Interactive Drawing Canvas -->
-            <div class="canvas-viewport" id="canvas-viewport">
-              <canvas id="whiteboard-canvas"></canvas>
-            </div>
-          </div>
-
-          <!-- Live Room Reactions Card (Kept & Working!) -->
-          <div class="board-card live-reactions-card">
-            <div class="reactions-header">
-              <div class="reactions-title-group">
-                <span class="reactions-icon">💖</span>
-                <div>
-                  <span class="reactions-label">Live Room Reactions</span>
-                  <span class="reactions-sub">Click to react with room members</span>
-                </div>
-              </div>
-            </div>
-
-            <div class="reactions-bar" role="toolbar" aria-label="Room Reactions">
-              <button class="reaction-trigger-btn" data-emoji="❤️" data-name="Love" title="Love (❤️)" aria-label="React with Love">
-                <span class="reaction-emoji-icon">❤️</span>
-                <span class="reaction-name-tag">Love</span>
-              </button>
-              <button class="reaction-trigger-btn" data-emoji="🔥" data-name="Fire" title="Fire (🔥)" aria-label="React with Fire">
-                <span class="reaction-emoji-icon">🔥</span>
-                <span class="reaction-name-tag">Fire</span>
-              </button>
-              <button class="reaction-trigger-btn" data-emoji="😂" data-name="Laugh" title="Laugh (😂)" aria-label="React with Laugh">
-                <span class="reaction-emoji-icon">😂</span>
-                <span class="reaction-name-tag">Laugh</span>
-              </button>
-              <button class="reaction-trigger-btn" data-emoji="👍" data-name="Like" title="Like (👍)" aria-label="React with Like">
-                <span class="reaction-emoji-icon">👍</span>
-                <span class="reaction-name-tag">Like</span>
-              </button>
-              <button class="reaction-trigger-btn" data-emoji="🎉" data-name="Celebrate" title="Celebrate (🎉)" aria-label="React with Celebrate">
-                <span class="reaction-emoji-icon">🎉</span>
-                <span class="reaction-name-tag">Celebrate</span>
-              </button>
-              <button class="reaction-trigger-btn" data-emoji="⚡" data-name="Wow" title="Wow (⚡)" aria-label="React with Wow">
-                <span class="reaction-emoji-icon">⚡</span>
-                <span class="reaction-name-tag">Wow</span>
-              </button>
-            </div>
-          </div>
-
-          <!-- Hidden elements for compatibility with existing tests & state -->
-          <div style="display: none;">
-            <span id="counter-val">0</span>
-            <span id="counter-version-val">1</span>
-            <button id="decrement-btn"></button>
-            <button id="increment-btn"></button>
-            <button id="step-up-btn"></button>
-            <button id="step-down-btn"></button>
-            <button id="reset-counter-btn"></button>
-            <div id="cursor-playground"></div>
-            <div id="room-details"></div>
-          </div>
+          <!-- Hidden elements for compatibility with existing tests -->
+          <div id="cursor-playground" style="display: none;"></div>
+          <div id="room-details" style="display: none;"></div>
+          <!-- Hidden counter elements for compatibility with shared-state tests -->
+          <button id="decrement-btn" style="display: none;"></button>
+          <button id="increment-btn" style="display: none;"></button>
+          <button id="step-down-btn" style="display: none;"></button>
+          <button id="step-up-btn" style="display: none;"></button>
+          <button id="reset-counter-btn" style="display: none;"></button>
+          <span id="counter-val" style="display: none;">0</span>
+          <span id="counter-version-val" style="display: none;">1</span>
         </div>
       </section>
     </main>
@@ -396,7 +337,7 @@
     <!-- Bottom Status Bar -->
     <footer class="bottom-bar">
       <div class="bottom-left">
-        <span class="engine-badge">SyncKit v0.1.0</span>
+        <span class="engine-badge">SyncKit v0.2.0</span>
         <span class="status-sep">•</span>
         <span class="state-version-info">Authoritative State: <strong id="state-version">1</strong></span>
         <span class="status-sep">•</span>
@@ -445,7 +386,7 @@
           <div class="invite-disclaimer">
             <span class="disclaimer-icon">⚠️</span>
             <span>
-              <strong>Note:</strong> Anyone with this link can join this real-time room and collaborate immediately. Room names provide isolation, not access-controlled authentication.
+              <strong>Note:</strong> Anyone with this link can join this real-time room, draw on the whiteboard, and collaborate on shared notes.
             </span>
           </div>
         </div>
