@@ -1,0 +1,32 @@
+{
+  "name": "synckit",
+  "version": "0.1.0",
+  "description": "A beginner-friendly library and real-time server to make webpages multiplayer.",
+  "main": "server/server.js",
+  "scripts": {
+    "start": "node server/server.js",
+    "dev": "node --watch server/server.js",
+    "test": "node test-state.js",
+    "test:reconnect": "node test-reconnection.js",
+    "test:3tabs": "node test-three-tabs-recovery.js",
+    "test:presence": "node test-presence-three-tabs.js",
+    "test:cursor": "node test-cursor-three-tabs.js"
+  },
+
+  "keywords": [
+    "multiplayer",
+    "realtime",
+    "socket.io",
+    "synckit",
+    "hackathon"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.19.2",
+    "socket.io": "^4.7.5"
+  },
+  "devDependencies": {
+    "socket.io-client": "^4.8.4"
+  }
+}

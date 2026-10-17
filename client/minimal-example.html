@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>SyncKit Minimal Example</title>
+  <style>
+    body { font-family: system-ui, sans-serif; padding: 2rem; background: #111; color: #eee; }
+    button { font-size: 1.2rem; padding: 0.5rem 1rem; cursor: pointer; }
+    #count { font-size: 2rem; font-weight: bold; color: #38bdf8; margin: 0 1rem; }
+  </style>
+</head>
+<body>
+  <h1>SyncKit Minimal Multiplayer Page</h1>
+  <p>Status: <span id="status">Connecting...</span></p>
+
+  <div>
+    <button id="dec">-</button>
+    <span id="count">0</span>
+    <button id="inc">+</button>
+  </div>
+
+  <!-- 1. Load Socket.IO client and the reusable SyncKit library -->
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/synckit/synckit.js"></script>
+
+  <script>
+    // 2. Initialize SyncKit and join a room
+    const sync = new SyncKit();
+    sync.joinRoom('minimal-room');
+
+    // 3. React to state changes
+    sync.onStateChange((state) => {
+      document.getElementById('count').textContent = state.count || 0;
+    });
+
+    // 4. React to connection status changes
+    sync.onStatusChange((status) => {
+      document.getElementById('status').textContent = status;
+    });
+
+    // 5. Update state on user action
+    document.getElementById('inc').onclick = () => {
+      sync.updateState({ count: (sync.getState().count || 0) + 1 });
+    };
+    document.getElementById('dec').onclick = () => {
+      sync.updateState({ count: (sync.getState().count || 0) - 1 });
+    };
+  </script>
+</body>
+</html>

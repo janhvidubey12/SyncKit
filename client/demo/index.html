@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SyncKit - Multiplayer Demo</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="container">
+    <header class="header">
+      <div class="logo-group">
+        <span class="badge">Hackathon Starter</span>
+        <h1>⚡ SyncKit</h1>
+      </div>
+      <p class="subtitle">A lightweight library to make any webpage multiplayer</p>
+    </header>
+
+    <main class="main-content">
+      <!-- Status Card -->
+      <section class="card status-card">
+        <h2>Connection Status</h2>
+        <div class="status-row">
+          <div class="status-indicator">
+            <span id="status-dot" class="dot disconnected"></span>
+            <span id="status-text">Disconnected</span>
+          </div>
+          <div class="user-count-badge">
+            👥 <span id="user-count">0</span> Online
+          </div>
+        </div>
+        <p class="socket-info">Your ID: <code id="client-id">Not connected</code></p>
+        <div style="margin-top: 0.75rem; display: flex; gap: 0.5rem; align-items: center;">
+          <input type="text" id="display-name-input" placeholder="Your display name..." style="flex: 1; padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border); background: rgba(0,0,0,0.3); color: var(--text-main);" />
+          <button id="update-name-btn" class="btn btn-sm action-btn">Update Name</button>
+        </div>
+        <div style="margin-top: 0.5rem;">
+          <button id="toggle-connection-btn" class="btn btn-sm action-btn">🔌 Disconnect Tab</button>
+        </div>
+      </section>
+
+      <!-- Room Joining Card -->
+      <section class="card room-card">
+        <h2>🏠 Rooms & Shared State</h2>
+        <p class="subtitle" style="margin-bottom: 1rem;">Join a named room to receive its server-authoritative state.</p>
+        
+        <div class="room-controls">
+          <input type="text" id="room-input" placeholder="Enter room name..." value="room-1" />
+          <button id="join-btn" class="btn primary-btn">Join Room</button>
+        </div>
+
+        <div class="room-details" id="room-details" style="display: none; margin-top: 1.25rem;">
+          <div class="room-meta">
+            <div>Current Room: <strong id="active-room-name">-</strong></div>
+            <div>Members in Room: <span id="active-room-members" class="pill">0</span></div>
+          </div>
+
+          <!-- Active Users Presence Section (Requirement 8) -->
+          <div class="interactive-section">
+            <label class="control-label">👥 Online Members in Room (<span id="presence-count">0</span>):</label>
+            <div id="presence-list" class="presence-list"></div>
+          </div>
+
+          <!-- Live Cursor Sharing Notice (Requirement 1 & 4) -->
+          <div class="interactive-section">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <label class="control-label" style="margin-bottom: 0;">🖱️ Live Cursors</label>
+              <span class="pill" style="background: var(--success); font-size: 0.75rem;">Broadcasting Live</span>
+            </div>
+            <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0.35rem;">
+              Move your mouse anywhere on this page! Your cursor and name will be rendered with a unique color in other members' browser tabs.
+            </p>
+          </div>
+
+          <!-- Interactive Shared Counter -->
+          <div class="interactive-section">
+            <label class="control-label">⚡ Shared Counter (Syncs across room)</label>
+            <div class="counter-group">
+              <button id="decrement-btn" class="btn btn-sm action-btn">➖ Decrement</button>
+              <div class="counter-badge"><span id="counter-val">0</span></div>
+              <button id="increment-btn" class="btn btn-sm primary-btn">➕ Increment</button>
+            </div>
+          </div>
+
+          <!-- Interactive Shared Note -->
+          <div class="interactive-section">
+            <label class="control-label">📝 Shared Room Note</label>
+            <div class="room-controls">
+              <input type="text" id="shared-text-input" placeholder="Type a message to sync with the room..." />
+              <button id="update-text-btn" class="btn primary-btn">Update</button>
+            </div>
+          </div>
+
+          <!-- State Request & Inspection -->
+          <div class="state-preview" style="margin-top: 1rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+              <span style="font-size: 0.85rem; color: var(--text-muted);">Authoritative Server State (v<span id="state-version">1</span>):</span>
+              <button id="refresh-state-btn" class="btn-text">🔄 Fetch State</button>
+            </div>
+            <pre><code id="room-state-output">{}</code></pre>
+          </div>
+
+          <div id="room-feed" class="room-feed"></div>
+        </div>
+      </section>
+
+      <!-- How to test multiplayer -->
+      <section class="card test-card">
+        <h2>🧪 Test It Out</h2>
+        <p>Open this page in <strong>two or more browser tabs</strong> side-by-side:</p>
+        <div class="instruction-box">
+          <code>http://localhost:3000/demo</code>
+        </div>
+        <p class="hint">Join the same room (e.g. <code>room-1</code>) in both tabs to test room presence and state syncing!</p>
+      </section>
+
+      <!-- Quick Start Snippet -->
+      <section class="card code-card">
+        <h2>💻 How to Use SyncKit (Public API)</h2>
+        <pre><code>&lt;!-- 1. Load Socket.IO and SyncKit --&gt;
+&lt;script src="/socket.io/socket.io.js"&gt;&lt;/script&gt;
+&lt;script src="/synckit/synckit.js"&gt;&lt;/script&gt;
+
+&lt;!-- 2. Use in your JavaScript --&gt;
+&lt;script&gt;
+  const sync = new SyncKit();
+  sync.joinRoom('my-room');
+
+  // React to state changes
+  sync.onStateChange((state) => {
+    console.log('Room state:', state);
+  });
+
+  // Request state updates
+  sync.updateState({ count: 1 });
+&lt;/script&gt;</code></pre>
+        <p style="margin-top: 0.75rem; font-size: 0.9rem; text-align: center;">
+          <a href="/minimal-example.html" target="_blank" style="color: var(--primary); text-decoration: underline;">
+            📄 View Standalone Minimal Example Webpage
+          </a>
+        </p>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>Built for the 12-hour Hackathon • Project SyncKit</p>
+    </footer>
+  </div>
+
+  <!-- Scripts -->
+  <!-- 1. Socket.IO client library automatically provided by the server -->
+  <script src="/socket.io/socket.io.js"></script>
+  <!-- 2. Reusable SyncKit library -->
+  <script src="/synckit/synckit.js"></script>
+  <!-- 3. Demo application logic -->
+  <script src="demo.js"></script>
+</body>
+</html>
