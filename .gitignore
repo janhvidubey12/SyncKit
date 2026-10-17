@@ -11,4 +11,6 @@ yarn-error.log*
 .idea/
 Hackathon/
 /synckit/
+server/data/
+*.db
 

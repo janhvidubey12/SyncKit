@@ -46,6 +46,30 @@ document.addEventListener('DOMContentLoaded', () => {
   const notesEmptyState = document.getElementById('notes-empty-state');
   const notesCountBadge = document.getElementById('notes-count-badge');
   const textSyncIndicator = document.getElementById('text-sync-indicator');
+  const newNoteEditable = document.getElementById('new-note-editable');
+
+  // Navigation Tabs (Notes vs Discussions)
+  const tabBtnNotes = document.getElementById('tab-btn-notes');
+  const tabBtnDiscussions = document.getElementById('tab-btn-discussions');
+  const notesTabContent = document.getElementById('notes-tab-content');
+  const discussionsTabContent = document.getElementById('discussions-tab-content');
+
+  // Stored Room Discussions Elements (SQLite Database)
+  const discussionsFeedList = document.getElementById('discussions-feed-list');
+  const discussionsEmptyState = document.getElementById('discussions-empty-state');
+  const discussionsCountBadge = document.getElementById('discussions-count-badge');
+  const discussionRoomBadge = document.getElementById('discussion-room-badge');
+  const discussionInput = document.getElementById('discussion-input');
+  const sendDiscussionBtn = document.getElementById('send-discussion-btn');
+
+  // Collaborative Whiteboard Elements (Pen & Eraser)
+  const whiteboardCanvas = document.getElementById('whiteboard-canvas');
+  const canvasViewport = document.getElementById('canvas-viewport');
+  const wbToolPen = document.getElementById('wb-tool-pen');
+  const wbToolEraser = document.getElementById('wb-tool-eraser');
+  const wbClearBtn = document.getElementById('wb-clear-btn');
+  const wbColorDots = document.querySelectorAll('.wb-color-dot');
+  const wbSizeBtns = document.querySelectorAll('.wb-size-btn');
 
   // Legacy elements preserved for test compatibility
   const sharedTextArea = document.getElementById('shared-text-area');
@@ -317,6 +341,7 @@ document.addEventListener('DOMContentLoaded', () => {
     saveNoteBtn.addEventListener('click', () => {
       const content = newNoteContent ? newNoteContent.value.trim() : '';
       const title = newNoteTitle ? newNoteTitle.value.trim() : '';
+      const editable = newNoteEditable ? newNoteEditable.checked : true;
 
       if (!content) {
         alert('Please write some content for your note.');
@@ -325,11 +350,11 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       setSyncStatus('saving', '◌ Publishing note...');
-      sync.createNote({ title, content }, (res) => {
+      sync.createNote({ title, content, editable }, (res) => {
         if (res && res.success) {
           closeNewNoteForm();
           setSyncStatus('synced', `● Synced (v${res.version || sync.getState().version || 1})`);
-          addLog(`📝 Published note "${title || content.slice(0, 20)}..." to room.`);
+          addLog(`📝 Published note "${title || content.slice(0, 20)}..." (${editable ? '🔓 Editable by all' : '🔒 Locked to author'}).`);
         } else {
           setSyncStatus('offline', '❌ Error saving');
           alert('Failed to publish note. Please check your connection.');
@@ -395,11 +420,13 @@ document.addEventListener('DOMContentLoaded', () => {
     notesCardsList.innerHTML = '';
     notes.forEach((note) => {
       const isMyNote = note.authorId === sync.getSessionId();
+      const isEditable = note.editable !== false;
+      const canEdit = isMyNote || isEditable;
       const authorColor = note.authorColor || SyncKit.getUserColor(note.authorId);
       const isCurrentlyEditing = activeEditingNoteId === note.id;
 
       const card = document.createElement('div');
-      card.className = `note-item-card ${isMyNote ? 'is-own-note' : ''}`;
+      card.className = `note-item-card ${isMyNote ? 'is-own-note' : ''} ${!isEditable ? 'is-locked-note' : ''}`;
       card.id = `note-card-${note.id}`;
 
       if (isCurrentlyEditing) {
@@ -408,13 +435,24 @@ document.addEventListener('DOMContentLoaded', () => {
           <div class="note-card-top">
             <div class="note-author-info">
               <span class="note-author-dot" style="background-color: ${authorColor};"></span>
-              <span class="note-author-name">${note.authorName || 'Member'}</span>
+              <span class="note-author-name">${escapeHtml(note.authorName || 'Member')}</span>
               ${isMyNote ? '<span class="note-you-pill">You</span>' : ''}
             </div>
             <span class="note-time">Editing</span>
           </div>
           <input type="text" id="edit-title-${note.id}" class="note-input-title" value="${escapeHtml(note.title || '')}" placeholder="Title (optional)" />
           <textarea id="edit-textarea-${note.id}" class="note-edit-area" rows="4">${escapeHtml(note.content || '')}</textarea>
+          ${isMyNote ? `
+            <div class="note-permission-row" style="margin-top: 0.35rem; padding: 0.4rem 0.6rem;">
+              <label class="perm-checkbox-label" for="edit-editable-${note.id}">
+                <input type="checkbox" id="edit-editable-${note.id}" ${isEditable ? 'checked' : ''} />
+                <span class="perm-checkbox-custom"></span>
+                <span class="perm-text-group">
+                  <strong class="perm-title" style="font-size: 0.78rem;">Allow other members to edit this note</strong>
+                </span>
+              </label>
+            </div>
+          ` : ''}
           <div class="new-note-actions" style="margin-top: 0.4rem;">
             <button class="btn btn-xs btn-outline cancel-edit-btn" data-id="${note.id}">Cancel</button>
             <button class="btn btn-xs btn-primary save-edit-btn" data-id="${note.id}">Save Changes</button>
@@ -426,20 +464,37 @@ document.addEventListener('DOMContentLoaded', () => {
           <div class="note-card-top">
             <div class="note-author-info">
               <span class="note-author-dot" style="background-color: ${authorColor};"></span>
-              <span class="note-author-name">${note.authorName || 'Member'}</span>
+              <span class="note-author-name">${escapeHtml(note.authorName || 'Member')}</span>
               ${isMyNote ? '<span class="note-you-pill">You</span>' : ''}
             </div>
-            <span class="note-time">${formatRelativeTime(note.updatedAt || note.createdAt)}</span>
+            <div class="note-top-right">
+              ${isEditable
+                ? '<span class="note-perm-pill editable" title="Anyone in this room can edit this note">🔓 Editable by all</span>'
+                : '<span class="note-perm-pill locked" title="Only the author can edit this note">🔒 Locked (Author only)</span>'
+              }
+              <span class="note-time">${formatRelativeTime(note.updatedAt || note.createdAt)}</span>
+            </div>
           </div>
           ${note.title ? `<div class="note-card-title">${escapeHtml(note.title)}</div>` : ''}
           <div class="note-card-body">${escapeHtml(note.content || '')}</div>
           <div class="note-card-footer">
-            <span class="note-shared-badge" title="Collaborative: All room members can see and edit this note">
-              🌐 Room Shared
+            <span class="note-shared-badge" title="${isEditable ? 'Collaborative: Any member can edit' : 'Author protected'}">
+              ${isEditable ? '🌐 Room Shared' : '🔒 Protected'}
             </span>
             <div class="note-actions-group">
-              <button class="btn-note-action edit-note-btn" data-id="${note.id}" title="Edit note (collaborative)">✏️ Edit</button>
-              <button class="btn-note-action delete delete-note-btn" data-id="${note.id}" title="Delete note (collaborative)">🗑️ Delete</button>
+              ${isMyNote ? `
+                <button class="btn-note-action perm-toggle-btn" data-id="${note.id}" title="${isEditable ? 'Click to lock note (only you can edit)' : 'Click to unlock note (allow all members to edit)'}">
+                  ${isEditable ? '🔒 Lock' : '🔓 Unlock'}
+                </button>
+              ` : ''}
+              ${canEdit ? `
+                <button class="btn-note-action edit-note-btn" data-id="${note.id}" title="Edit note">✏️ Edit</button>
+              ` : `
+                <button class="btn-note-action locked" disabled title="Locked: Only ${escapeHtml(note.authorName || 'author')} can edit this note">🔒 Read-only</button>
+              `}
+              ${(isMyNote || isEditable) ? `
+                <button class="btn-note-action delete delete-note-btn" data-id="${note.id}" title="Delete note">🗑️ Delete</button>
+              ` : ''}
             </div>
           </div>
         `;
@@ -448,7 +503,7 @@ document.addEventListener('DOMContentLoaded', () => {
       notesCardsList.appendChild(card);
     });
 
-    // Attach listeners for Edit, Delete, Save
+    // Attach listeners for Edit, Delete, Save, Toggle Permission
     attachNoteCardActions();
   }
 
@@ -463,6 +518,23 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function attachNoteCardActions() {
+    // Permission toggle buttons (Author only)
+    document.querySelectorAll('.perm-toggle-btn').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        const id = e.currentTarget.getAttribute('data-id');
+        setSyncStatus('saving', '◌ Updating permission...');
+        sync.toggleNoteEditable(id, (res) => {
+          if (res && res.success) {
+            setSyncStatus('synced', `● Synced (v${res.version || sync.getState().version || 1})`);
+            addLog(`🔒 Updated note editing permission.`);
+          } else {
+            setSyncStatus('offline', '❌ Error');
+            alert(res?.error || 'Failed to update note permission.');
+          }
+        });
+      });
+    });
+
     // Edit buttons
     document.querySelectorAll('.edit-note-btn').forEach((btn) => {
       btn.addEventListener('click', (e) => {
@@ -491,6 +563,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const id = e.currentTarget.getAttribute('data-id');
         const titleInput = document.getElementById(`edit-title-${id}`);
         const contentTextarea = document.getElementById(`edit-textarea-${id}`);
+        const editEditableCheckbox = document.getElementById(`edit-editable-${id}`);
         const updatedTitle = titleInput ? titleInput.value.trim() : '';
         const updatedContent = contentTextarea ? contentTextarea.value.trim() : '';
 
@@ -499,14 +572,20 @@ document.addEventListener('DOMContentLoaded', () => {
           return;
         }
 
+        const updates = { title: updatedTitle, content: updatedContent };
+        if (editEditableCheckbox) {
+          updates.editable = editEditableCheckbox.checked;
+        }
+
         setSyncStatus('saving', '◌ Saving changes...');
-        sync.editNote(id, { title: updatedTitle, content: updatedContent }, (res) => {
+        sync.editNote(id, updates, (res) => {
           activeEditingNoteId = null;
           if (res && res.success) {
             setSyncStatus('synced', `● Synced (v${res.version || sync.getState().version || 1})`);
             addLog(`✏️ Updated note "${updatedTitle || updatedContent.slice(0, 20)}...".`);
           } else {
             setSyncStatus('offline', '❌ Error saving');
+            alert(res?.error || 'Failed to save note changes.');
           }
         });
       });
@@ -524,6 +603,7 @@ document.addEventListener('DOMContentLoaded', () => {
               addLog('🗑️ Deleted note from room.');
             } else {
               setSyncStatus('offline', '❌ Error deleting');
+              alert(res?.error || 'Failed to delete note.');
             }
           });
         }
@@ -707,13 +787,15 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    // Immediately reset notes and cursors to prevent stale leak from previous room
+    // Immediately reset notes, discussions, whiteboard and cursors to prevent stale leak from previous room
     activeEditingNoteId = null;
     clearTimeout(editDebounceTimer);
     closeNewNoteForm();
     clearAllCursors();
+    clearLocalCanvas();
 
     if (notesRoomBadge) notesRoomBadge.textContent = targetRoom;
+    if (discussionRoomBadge) discussionRoomBadge.textContent = targetRoom;
     if (activeRoomName) activeRoomName.textContent = targetRoom;
     if (navRoomName) navRoomName.textContent = targetRoom;
     if (roomInput) roomInput.value = targetRoom;
@@ -744,7 +826,13 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (activeRoomMembers) activeRoomMembers.textContent = res.presence?.length || 1;
         if (res.state) renderState(res.state);
-        addLog(`✅ Joined room "${targetRoom}". Authoritative state & notes synchronized.`);
+
+        // Load discussions and whiteboard from SQLite database for target room
+        if (discussionRoomBadge) discussionRoomBadge.textContent = targetRoom;
+        renderDiscussionsList(sync.getDiscussions());
+        redrawAllWhiteboardStrokes(sync.getWhiteboardStrokes());
+
+        addLog(`✅ Joined room "${targetRoom}". Authoritative state, notes & discussions synchronized.`);
       } else if (res && res.error) {
         addLog(`❌ Failed to join room "${targetRoom}": ${res.error}`);
         setSyncStatus('offline', '❌ Error');
@@ -912,17 +1000,340 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  // Manual Fetch State on Demand
-  if (refreshStateBtn) {
-    refreshStateBtn.addEventListener('click', () => {
-      sync.getState((res) => {
-        if (res && res.success) {
-          renderState(res.state);
-          addLog(`🔄 State snapshot fetched from server (v${res.state.version}).`);
-        }
-      });
+  // ==========================================
+  // Navigation Tabs: Notes vs Discussions
+  // ==========================================
+  if (tabBtnNotes && tabBtnDiscussions) {
+    tabBtnNotes.addEventListener('click', () => {
+      tabBtnNotes.classList.add('active');
+      tabBtnDiscussions.classList.remove('active');
+      if (notesTabContent) notesTabContent.style.display = 'block';
+      if (discussionsTabContent) discussionsTabContent.style.display = 'none';
+    });
+
+    tabBtnDiscussions.addEventListener('click', () => {
+      tabBtnDiscussions.classList.add('active');
+      tabBtnNotes.classList.remove('active');
+      if (notesTabContent) notesTabContent.style.display = 'none';
+      if (discussionsTabContent) discussionsTabContent.style.display = 'flex';
+      scrollDiscussionsToBottom();
     });
   }
+
+  // ==========================================
+  // Stored Room Discussions (SQLite Database)
+  // ==========================================
+  function renderDiscussionsList(discussions) {
+    if (!discussionsFeedList) return;
+    const list = Array.isArray(discussions) ? discussions : [];
+
+    if (discussionsCountBadge) {
+      discussionsCountBadge.textContent = list.length;
+    }
+
+    if (list.length === 0) {
+      discussionsFeedList.innerHTML = `
+        <div id="discussions-empty-state" class="discussions-empty-card">
+          <span class="empty-icon">💬</span>
+          <h4 class="empty-title">No Discussions in This Room Yet</h4>
+          <p class="empty-desc">Share discussion points, ideas, or feedback. All room discussions are permanently stored in the SQLite database.</p>
+        </div>
+      `;
+      return;
+    }
+
+    discussionsFeedList.innerHTML = '';
+    list.forEach((item) => {
+      const isMe = item.sessionId === sync.getSessionId();
+      const color = item.authorColor || SyncKit.getUserColor(item.sessionId);
+
+      const msgCard = document.createElement('div');
+      msgCard.className = `discussion-msg-card ${isMe ? 'is-me' : ''}`;
+      msgCard.innerHTML = `
+        <div class="msg-header">
+          <span class="msg-author-dot" style="background-color: ${color};"></span>
+          <span class="msg-author-name">${escapeHtml(item.authorName || 'Anonymous')}</span>
+          ${isMe ? '<span class="note-you-pill">You</span>' : ''}
+          <span class="msg-time">${formatRelativeTime(item.createdAt)}</span>
+        </div>
+        <div class="msg-content">${escapeHtml(item.message)}</div>
+      `;
+      discussionsFeedList.appendChild(msgCard);
+    });
+
+    scrollDiscussionsToBottom();
+  }
+
+  function scrollDiscussionsToBottom() {
+    if (discussionsFeedList) {
+      setTimeout(() => {
+        discussionsFeedList.scrollTop = discussionsFeedList.scrollHeight;
+      }, 50);
+    }
+  }
+
+  function handleSendDiscussion() {
+    if (!discussionInput) return;
+    const msg = discussionInput.value.trim();
+    if (!msg) return;
+
+    discussionInput.value = '';
+    sync.sendDiscussion(msg, (res) => {
+      if (res && res.success) {
+        addLog(`💬 Saved discussion to SQLite database.`);
+      } else {
+        alert(res?.error || 'Failed to save discussion message.');
+      }
+    });
+  }
+
+  if (sendDiscussionBtn) {
+    sendDiscussionBtn.addEventListener('click', handleSendDiscussion);
+  }
+  if (discussionInput) {
+    discussionInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') handleSendDiscussion();
+    });
+  }
+
+  // Subscribe to real-time incoming discussions (stored in SQLite)
+  sync.onDiscussion((newMsg) => {
+    renderDiscussionsList(sync.getDiscussions());
+    addLog(`💬 New discussion from ${newMsg.authorName || 'member'} (saved to DB).`);
+  });
+
+  // ==========================================
+  // Interactive Collaborative Whiteboard (Pen & Eraser)
+  // ==========================================
+  let wbCtx = null;
+  let isDrawing = false;
+  let lastWbX = 0;
+  let lastWbY = 0;
+  let currentTool = 'pen'; // 'pen' | 'eraser'
+  let currentColor = '#ef4444';
+  let currentSize = 4;
+
+  function initWhiteboard() {
+    if (!whiteboardCanvas || !canvasViewport) return;
+
+    function resizeCanvas() {
+      const rect = canvasViewport.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) return;
+
+      const dpr = window.devicePixelRatio || 1;
+      whiteboardCanvas.width = Math.floor(rect.width * dpr);
+      whiteboardCanvas.height = Math.floor(rect.height * dpr);
+      whiteboardCanvas.style.width = `${rect.width}px`;
+      whiteboardCanvas.style.height = `${rect.height}px`;
+
+      wbCtx = whiteboardCanvas.getContext('2d');
+      wbCtx.scale(dpr, dpr);
+      wbCtx.lineCap = 'round';
+      wbCtx.lineJoin = 'round';
+
+      redrawAllWhiteboardStrokes(sync.getWhiteboardStrokes());
+    }
+
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
+  }
+
+  function clearLocalCanvas() {
+    if (!whiteboardCanvas || !wbCtx) return;
+    wbCtx.save();
+    wbCtx.setTransform(1, 0, 0, 1, 0, 0);
+    wbCtx.clearRect(0, 0, whiteboardCanvas.width, whiteboardCanvas.height);
+    wbCtx.restore();
+  }
+
+  function drawWhiteboardLine(x0, y0, x1, y1, color, size, tool) {
+    if (!wbCtx || !whiteboardCanvas) return;
+    wbCtx.save();
+    if (tool === 'eraser') {
+      wbCtx.globalCompositeOperation = 'destination-out';
+      wbCtx.lineWidth = (size || 4) * 3.5; // Eraser radius is wider
+    } else {
+      wbCtx.globalCompositeOperation = 'source-over';
+      wbCtx.strokeStyle = color || '#ef4444';
+      wbCtx.lineWidth = size || 4;
+    }
+    wbCtx.beginPath();
+    wbCtx.moveTo(x0, y0);
+    wbCtx.lineTo(x1, y1);
+    wbCtx.stroke();
+    wbCtx.restore();
+  }
+
+  function redrawAllWhiteboardStrokes(strokes) {
+    clearLocalCanvas();
+    if (!Array.isArray(strokes) || strokes.length === 0 || !canvasViewport) return;
+    const rect = canvasViewport.getBoundingClientRect();
+    const w = rect.width || 400;
+    const h = rect.height || 350;
+
+    strokes.forEach((s) => {
+      const x0 = typeof s.pctX0 === 'number' ? s.pctX0 * w : s.x0;
+      const y0 = typeof s.pctY0 === 'number' ? s.pctY0 * h : s.y0;
+      const x1 = typeof s.pctX1 === 'number' ? s.pctX1 * w : s.x1;
+      const y1 = typeof s.pctY1 === 'number' ? s.pctY1 * h : s.y1;
+      drawWhiteboardLine(x0, y0, x1, y1, s.color, s.size, s.tool);
+    });
+  }
+
+  function getCanvasRelativeCoords(e) {
+    if (!whiteboardCanvas) return { x: 0, y: 0, width: 1, height: 1 };
+    const rect = whiteboardCanvas.getBoundingClientRect();
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    return {
+      x: Math.round(clientX - rect.left),
+      y: Math.round(clientY - rect.top),
+      width: rect.width,
+      height: rect.height,
+    };
+  }
+
+  if (whiteboardCanvas) {
+    const handleStartDraw = (e) => {
+      e.preventDefault();
+      isDrawing = true;
+      const coords = getCanvasRelativeCoords(e);
+      lastWbX = coords.x;
+      lastWbY = coords.y;
+
+      // Draw single point
+      drawWhiteboardLine(lastWbX, lastWbY, lastWbX + 0.5, lastWbY + 0.5, currentColor, currentSize, currentTool);
+      const stroke = {
+        x0: lastWbX,
+        y0: lastWbY,
+        x1: lastWbX + 0.5,
+        y1: lastWbY + 0.5,
+        pctX0: coords.width > 0 ? lastWbX / coords.width : 0,
+        pctY0: coords.height > 0 ? lastWbY / coords.height : 0,
+        pctX1: coords.width > 0 ? (lastWbX + 0.5) / coords.width : 0,
+        pctY1: coords.height > 0 ? (lastWbY + 0.5) / coords.height : 0,
+        color: currentColor,
+        size: currentSize,
+        tool: currentTool,
+      };
+      sync.sendDrawStroke(stroke);
+    };
+
+    const handleMoveDraw = (e) => {
+      if (!isDrawing) return;
+      e.preventDefault();
+      const coords = getCanvasRelativeCoords(e);
+      const currX = coords.x;
+      const currY = coords.y;
+
+      drawWhiteboardLine(lastWbX, lastWbY, currX, currY, currentColor, currentSize, currentTool);
+      const stroke = {
+        x0: lastWbX,
+        y0: lastWbY,
+        x1: currX,
+        y1: currY,
+        pctX0: coords.width > 0 ? lastWbX / coords.width : 0,
+        pctY0: coords.height > 0 ? lastWbY / coords.height : 0,
+        pctX1: coords.width > 0 ? currX / coords.width : 0,
+        pctY1: coords.height > 0 ? currY / coords.height : 0,
+        color: currentColor,
+        size: currentSize,
+        tool: currentTool,
+      };
+      sync.sendDrawStroke(stroke);
+      lastWbX = currX;
+      lastWbY = currY;
+    };
+
+    const handleEndDraw = () => {
+      isDrawing = false;
+    };
+
+    whiteboardCanvas.addEventListener('mousedown', handleStartDraw);
+    whiteboardCanvas.addEventListener('mousemove', handleMoveDraw);
+    window.addEventListener('mouseup', handleEndDraw);
+
+    whiteboardCanvas.addEventListener('touchstart', handleStartDraw, { passive: false });
+    whiteboardCanvas.addEventListener('touchmove', handleMoveDraw, { passive: false });
+    window.addEventListener('touchend', handleEndDraw);
+  }
+
+  // Whiteboard Tools: Pen & Eraser
+  if (wbToolPen) {
+    wbToolPen.addEventListener('click', () => {
+      currentTool = 'pen';
+      wbToolPen.classList.add('active');
+      if (wbToolEraser) wbToolEraser.classList.remove('active');
+    });
+  }
+
+  if (wbToolEraser) {
+    wbToolEraser.addEventListener('click', () => {
+      currentTool = 'eraser';
+      wbToolEraser.classList.add('active');
+      if (wbToolPen) wbToolPen.classList.remove('active');
+    });
+  }
+
+  // Whiteboard Color Palette
+  wbColorDots.forEach((dot) => {
+    dot.addEventListener('click', () => {
+      const color = dot.getAttribute('data-color');
+      if (color) {
+        currentColor = color;
+        currentTool = 'pen';
+        if (wbToolPen) wbToolPen.classList.add('active');
+        if (wbToolEraser) wbToolEraser.classList.remove('active');
+        wbColorDots.forEach((d) => d.classList.remove('active'));
+        dot.classList.add('active');
+      }
+    });
+  });
+
+  // Whiteboard Stroke Sizes
+  wbSizeBtns.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const size = Number(btn.getAttribute('data-size'));
+      if (size) {
+        currentSize = size;
+        wbSizeBtns.forEach((b) => b.classList.remove('active'));
+        btn.classList.add('active');
+      }
+    });
+  });
+
+  // Clear Whiteboard Button
+  if (wbClearBtn) {
+    wbClearBtn.addEventListener('click', () => {
+      if (confirm('Clear collaborative whiteboard canvas for all room members?')) {
+        clearLocalCanvas();
+        sync.clearWhiteboard(() => {
+          addLog('🗑️ Cleared collaborative whiteboard.');
+        });
+      }
+    });
+  }
+
+  // Listen to remote drawing strokes
+  sync.onDrawStroke((stroke) => {
+    if (!canvasViewport) return;
+    const rect = canvasViewport.getBoundingClientRect();
+    const w = rect.width || 400;
+    const h = rect.height || 350;
+    const x0 = typeof stroke.pctX0 === 'number' ? stroke.pctX0 * w : stroke.x0;
+    const y0 = typeof stroke.pctY0 === 'number' ? stroke.pctY0 * h : stroke.y0;
+    const x1 = typeof stroke.pctX1 === 'number' ? stroke.pctX1 * w : stroke.x1;
+    const y1 = typeof stroke.pctY1 === 'number' ? stroke.pctY1 * h : stroke.y1;
+    drawWhiteboardLine(x0, y0, x1, y1, stroke.color, stroke.size, stroke.tool);
+  });
+
+  // Listen to remote whiteboard clear
+  sync.onWhiteboardClear(() => {
+    clearLocalCanvas();
+    addLog('🧹 Whiteboard canvas cleared by room member.');
+  });
+
+  initWhiteboard();
 
   // ==========================================
   // 10. Shareable Invite Modal & Link

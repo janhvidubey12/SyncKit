@@ -6,6 +6,7 @@ const express = require('express');
 const http = require('http');
 const path = require('path');
 const { Server } = require('socket.io');
+const db = require('./database');
 
 // ==========================================
 // 1. Start HTTP Server with Express
@@ -51,6 +52,13 @@ app.get('/', (req, res) => {
 app.get('/room/:roomId', (req, res) => {
   const roomId = encodeURIComponent(req.params.roomId);
   res.redirect(`/demo?room=${roomId}`);
+});
+
+// Stored Room Discussions API from SQLite database
+app.get('/api/rooms/:roomId/discussions', (req, res) => {
+  const roomId = req.params.roomId;
+  const discussions = db.getDiscussions(roomId);
+  res.status(200).json({ success: true, roomId, discussions });
 });
 
 
@@ -248,7 +256,11 @@ io.on('connection', (socket) => {
       const activePresenceList = Object.values(room.presence);
       console.log(`[SyncKit Server] [Room Join] ${displayName} (${sessionId}) joined "${roomId}" (Online: ${activePresenceList.length})`);
 
-      // 5. Send current authoritative room state & active presence to joining client
+      // 5. Retrieve discussions and whiteboard strokes from SQLite database for this room
+      const discussions = db.getDiscussions(roomId);
+      const whiteboardStrokes = db.getWhiteboardStrokes(roomId);
+
+      // Send current authoritative room state & active presence to joining client
       socket.emit('room-joined', {
         roomId: room.id,
         state: room.state,
@@ -256,6 +268,8 @@ io.on('connection', (socket) => {
         presence: activePresenceList,
         sessionId,
         isNewRoom: isNew, // Requirement 10
+        discussions,
+        whiteboardStrokes,
       });
 
       // 6. Broadcast updated presence to all clients in the room (Requirement 4)
@@ -272,6 +286,8 @@ io.on('connection', (socket) => {
           sessionId,
           presence: activePresenceList,
           isNewRoom: isNew,
+          discussions,
+          whiteboardStrokes,
         });
       }
     } catch (err) {
@@ -447,6 +463,91 @@ io.on('connection', (socket) => {
         emoji,
         timestamp: Date.now(),
       });
+    }
+  });
+
+  // ----------------------------------------------------
+  // EVENT: send-discussion
+  // Saves discussion to SQLite database and broadcasts to room members
+  // ----------------------------------------------------
+  socket.on('send-discussion', (payload, callback) => {
+    try {
+      const roomId = payload?.roomId || Array.from(socket.currentRooms)[0];
+      const message = String(payload?.message || '').trim().slice(0, 5000);
+
+      if (!roomId || !message) {
+        if (typeof callback === 'function') callback({ success: false, error: 'Empty message or invalid room' });
+        return;
+      }
+
+      const savedDiscussion = db.addDiscussion({
+        roomId,
+        sessionId: socket.sessionId || payload?.sessionId || socket.id,
+        authorName: socket.displayName || payload?.authorName || 'Anonymous',
+        authorColor: payload?.authorColor || '#ef4444',
+        message,
+      });
+
+      console.log(`[SyncKit Database] [Discussion Saved] Room "${roomId}" by ${savedDiscussion.authorName}: "${message.slice(0, 30)}..."`);
+
+      // Broadcast to ALL sockets in this room (including sender for acknowledgment)
+      io.to(roomId).emit('new-discussion', {
+        roomId,
+        discussion: savedDiscussion,
+      });
+
+      if (typeof callback === 'function') {
+        callback({ success: true, roomId, discussion: savedDiscussion });
+      }
+    } catch (err) {
+      console.error(`[SyncKit Server] [Error] Failed saving discussion message:`, err);
+      if (typeof callback === 'function') callback({ success: false, error: err.message });
+    }
+  });
+
+  // ----------------------------------------------------
+  // EVENT: get-discussions
+  // Retrieves stored discussions from SQLite database for room
+  // ----------------------------------------------------
+  socket.on('get-discussions', (payload, callback) => {
+    try {
+      const roomId = typeof payload === 'string' ? payload.trim() : payload?.roomId?.trim();
+      if (!roomId) {
+        if (typeof callback === 'function') callback({ success: false, error: 'Invalid room' });
+        return;
+      }
+      const discussions = db.getDiscussions(roomId);
+      if (typeof callback === 'function') {
+        callback({ success: true, roomId, discussions });
+      }
+    } catch (err) {
+      console.error(`[SyncKit Server] [Error] Failed getting discussions:`, err);
+      if (typeof callback === 'function') callback({ success: false, error: err.message });
+    }
+  });
+
+  // ----------------------------------------------------
+  // EVENT: draw-stroke
+  // Broadcasts interactive whiteboard drawing stroke and saves to database
+  // ----------------------------------------------------
+  socket.on('draw-stroke', (payload) => {
+    const roomId = payload?.roomId || Array.from(socket.currentRooms)[0];
+    if (roomId && rooms[roomId] && rooms[roomId].members.has(socket.id)) {
+      db.addWhiteboardStroke(roomId, payload);
+      // Relay strictly to other clients in this specific room
+      socket.to(roomId).emit('draw-stroke', payload);
+    }
+  });
+
+  // ----------------------------------------------------
+  // EVENT: clear-whiteboard
+  // Clears whiteboard canvas drawing history from database and notifies room
+  // ----------------------------------------------------
+  socket.on('clear-whiteboard', (payload) => {
+    const roomId = payload?.roomId || Array.from(socket.currentRooms)[0];
+    if (roomId && rooms[roomId] && rooms[roomId].members.has(socket.id)) {
+      db.clearWhiteboardStrokes(roomId);
+      io.to(roomId).emit('whiteboard-cleared', { roomId });
     }
   });
 

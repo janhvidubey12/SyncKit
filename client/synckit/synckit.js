@@ -33,6 +33,8 @@ class SyncKit {
     this.currentRoom = null;
     this.state = {};
     this.presenceList = []; // Array of currently online users in the room
+    this.discussions = []; // Stored room discussions from database
+    this.whiteboardStrokes = []; // Stored whiteboard strokes
 
     // 5. Cursor Tracking & Throttling (Requirement 6 & 7)
     this.cursorThrottleMs = options.cursorThrottleMs || 30; // ~33fps limit
@@ -40,7 +42,6 @@ class SyncKit {
     this._cursorThrottleTimer = null;
     this._pendingCursor = null;
     this._pendingJoinCallback = null;
-
 
     // 6. Public Event Subscriptions
     this._listeners = {
@@ -52,6 +53,9 @@ class SyncKit {
       userJoined: [],
       userLeft: [],
       reaction: [],
+      discussion: [],
+      drawStroke: [],
+      whiteboardClear: [],
     };
 
     if (this.autoConnect) {
@@ -250,12 +254,14 @@ class SyncKit {
 
   /**
    * Create a new note belonging to this member in the current room
-   * @param {{ title?: string, content: string }} noteData
+   * @param {{ title?: string, content: string, editable?: boolean }} noteData
    * @param {Function} [callback]
    */
   createNote(noteData, callback) {
     const title = typeof noteData === 'object' && noteData.title ? String(noteData.title).trim().slice(0, 80) : '';
     const content = typeof noteData === 'object' ? String(noteData.content || '').slice(0, 15000) : String(noteData || '').slice(0, 15000);
+    // Allow author to decide if their note can be edited by others (default: true)
+    const editable = typeof noteData === 'object' && noteData.editable !== undefined ? Boolean(noteData.editable) : true;
 
     const newNote = {
       id: `note_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
@@ -264,6 +270,7 @@ class SyncKit {
       authorColor: this.getUserColor(),
       title: title,
       content: content,
+      editable: editable,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       updatedBy: this.displayName || 'Member',
@@ -282,8 +289,9 @@ class SyncKit {
 
   /**
    * Edit an existing note in the current room
+   * Enforces author lock if editable is set to false.
    * @param {string} noteId
-   * @param {string|{ title?: string, content?: string }} updates
+   * @param {string|{ title?: string, content?: string, editable?: boolean }} updates
    * @param {Function} [callback]
    */
   editNote(noteId, updates, callback) {
@@ -297,17 +305,33 @@ class SyncKit {
     }
 
     const existing = currentList[noteIndex];
+    const isAuthor = existing.authorId === this.sessionId;
+    const isEditable = existing.editable !== false;
+
+    // Strict Permission check: If locked and caller is not the author, reject edit
+    if (!isEditable && !isAuthor) {
+      const err = `This note has been locked by ${existing.authorName || 'its author'} and cannot be edited by other members.`;
+      this._emitError('NOTE_LOCKED', err);
+      if (typeof callback === 'function') callback({ success: false, error: err });
+      return this;
+    }
+
     const newContent = typeof updates === 'string'
       ? updates.slice(0, 15000)
       : (updates.content !== undefined ? String(updates.content).slice(0, 15000) : existing.content);
     const newTitle = typeof updates === 'object' && updates.title !== undefined
       ? String(updates.title).slice(0, 80)
       : existing.title;
+    // Only author can toggle editable permission
+    const newEditable = isAuthor && typeof updates === 'object' && updates.editable !== undefined
+      ? Boolean(updates.editable)
+      : (existing.editable !== false);
 
     currentList[noteIndex] = {
       ...existing,
       title: newTitle,
       content: newContent,
+      editable: newEditable,
       updatedAt: new Date().toISOString(),
       updatedBy: this.displayName || 'Member',
     };
@@ -322,12 +346,38 @@ class SyncKit {
   }
 
   /**
+   * Toggle note editable lock permission (only permitted by note author)
+   * @param {string} noteId
+   * @param {Function} [callback]
+   */
+  toggleNoteEditable(noteId, callback) {
+    const currentList = Array.isArray(this.state.notesList) ? [...this.state.notesList] : [];
+    const note = currentList.find((n) => n.id === noteId);
+    if (!note) {
+      if (typeof callback === 'function') callback({ success: false, error: 'Note not found' });
+      return this;
+    }
+    const currentEditable = note.editable !== false;
+    return this.editNote(noteId, { editable: !currentEditable }, callback);
+  }
+
+  /**
    * Delete a note from the current room
+   * Enforces lock if note is locked by another author.
    * @param {string} noteId
    * @param {Function} [callback]
    */
   deleteNote(noteId, callback) {
     const currentList = Array.isArray(this.state.notesList) ? [...this.state.notesList] : [];
+    const note = currentList.find((n) => n.id === noteId);
+
+    if (note && note.editable === false && note.authorId !== this.sessionId) {
+      const err = `This note has been locked by ${note.authorName || 'its author'} and cannot be deleted by other members.`;
+      this._emitError('NOTE_LOCKED', err);
+      if (typeof callback === 'function') callback({ success: false, error: err });
+      return this;
+    }
+
     const updatedList = currentList.filter((n) => n.id !== noteId);
     const serializedNotes = updatedList.map((n) => n.content).join('\n\n');
 
@@ -505,6 +555,85 @@ class SyncKit {
   }
 
   // ==========================================
+  // Public API: Room Discussions (Database Stored)
+  // ==========================================
+
+  /**
+   * Get all loaded discussions for the current room
+   * @returns {Array<Object>}
+   */
+  getDiscussions() {
+    return [...this.discussions];
+  }
+
+  /**
+   * Send a discussion message to be saved into SQLite database and shared across the room
+   * @param {string} message
+   * @param {Function} [callback]
+   */
+  sendDiscussion(message, callback) {
+    if (!message || typeof message !== 'string' || !message.trim()) {
+      if (typeof callback === 'function') callback({ success: false, error: 'Empty message' });
+      return this;
+    }
+
+    if (!this.isConnected() || !this.currentRoom) {
+      if (typeof callback === 'function') callback({ success: false, error: 'Not connected to room' });
+      return this;
+    }
+
+    this.socket.emit('send-discussion', {
+      roomId: this.currentRoom,
+      sessionId: this.sessionId,
+      authorName: this.displayName,
+      authorColor: this.getUserColor(),
+      message: message.trim(),
+    }, (res) => {
+      if (typeof callback === 'function') callback(res);
+    });
+
+    return this;
+  }
+
+  // ==========================================
+  // Public API: Whiteboard Drawing (Pen & Eraser)
+  // ==========================================
+
+  /**
+   * Get loaded whiteboard drawing strokes for room
+   * @returns {Array<Object>}
+   */
+  getWhiteboardStrokes() {
+    return [...this.whiteboardStrokes];
+  }
+
+  /**
+   * Broadcast a drawing stroke (pen or eraser) to room members and save in database
+   * @param {{ x0: number, y0: number, x1: number, y1: number, color: string, size: number, tool: 'pen'|'eraser' }} stroke
+   */
+  sendDrawStroke(stroke) {
+    if (!this.isConnected() || !this.currentRoom || !stroke) return this;
+    this.whiteboardStrokes.push(stroke);
+    this.socket.emit('draw-stroke', {
+      roomId: this.currentRoom,
+      ...stroke,
+    });
+    return this;
+  }
+
+  /**
+   * Clear the collaborative whiteboard for all members in room
+   * @param {Function} [callback]
+   */
+  clearWhiteboard(callback) {
+    if (!this.isConnected() || !this.currentRoom) return this;
+    this.whiteboardStrokes = [];
+    this.socket.emit('clear-whiteboard', { roomId: this.currentRoom });
+    if (typeof callback === 'function') callback({ success: true });
+    return this;
+  }
+
+  // ==========================================
   // Public API: Subscriptions / Event Listeners
   // (Avoids duplicate listener entries - Requirement 8)
   // ==========================================
@@ -568,6 +697,48 @@ class SyncKit {
     }
     return () => {
       this._listeners.reaction = this._listeners.reaction.filter((cb) => cb !== callback);
+    };
+  }
+
+  /**
+   * Subscribe to new discussion messages stored in database
+   * @param {Function} callback Receives discussion object
+   */
+  onDiscussion(callback) {
+    if (typeof callback !== 'function') return () => {};
+    if (!this._listeners.discussion.includes(callback)) {
+      this._listeners.discussion.push(callback);
+    }
+    return () => {
+      this._listeners.discussion = this._listeners.discussion.filter((cb) => cb !== callback);
+    };
+  }
+
+  /**
+   * Subscribe to incoming whiteboard drawing strokes
+   * @param {Function} callback Receives stroke data
+   */
+  onDrawStroke(callback) {
+    if (typeof callback !== 'function') return () => {};
+    if (!this._listeners.drawStroke.includes(callback)) {
+      this._listeners.drawStroke.push(callback);
+    }
+    return () => {
+      this._listeners.drawStroke = this._listeners.drawStroke.filter((cb) => cb !== callback);
+    };
+  }
+
+  /**
+   * Subscribe to whiteboard canvas clear events
+   * @param {Function} callback
+   */
+  onWhiteboardClear(callback) {
+    if (typeof callback !== 'function') return () => {};
+    if (!this._listeners.whiteboardClear.includes(callback)) {
+      this._listeners.whiteboardClear.push(callback);
+    }
+    return () => {
+      this._listeners.whiteboardClear = this._listeners.whiteboardClear.filter((cb) => cb !== callback);
     };
   }
 
@@ -683,6 +854,8 @@ class SyncKit {
       this.currentRoom = data.roomId;
       this.state = data.state || {};
       this.presenceList = Array.isArray(data.presence) ? data.presence : Object.values(data.presence || {});
+      this.discussions = Array.isArray(data.discussions) ? data.discussions : [];
+      this.whiteboardStrokes = Array.isArray(data.whiteboardStrokes) ? data.whiteboardStrokes : [];
 
       const wasReset = Boolean(data.isNewRoom && wasReconnection);
       if (wasReset) {
@@ -735,7 +908,30 @@ class SyncKit {
       this._listeners.reaction.forEach((cb) => cb(data));
     });
 
-    // 7. Errors
+    // 7. Persistent Room Discussions (Stored in SQLite Database)
+    this.socket.on('new-discussion', (data) => {
+      if (data.roomId === this.currentRoom && data.discussion) {
+        this.discussions.push(data.discussion);
+        this._listeners.discussion.forEach((cb) => cb(data.discussion));
+      }
+    });
+
+    // 8. Collaborative Whiteboard Drawing (Pen & Eraser)
+    this.socket.on('draw-stroke', (data) => {
+      if (data.roomId === this.currentRoom) {
+        this.whiteboardStrokes.push(data);
+        this._listeners.drawStroke.forEach((cb) => cb(data));
+      }
+    });
+
+    this.socket.on('whiteboard-cleared', (data) => {
+      if (data.roomId === this.currentRoom) {
+        this.whiteboardStrokes = [];
+        this._listeners.whiteboardClear.forEach((cb) => cb(data));
+      }
+    });
+
+    // 9. Errors
     this.socket.on('synckit:error', (err) => {
       this._emitError(err.code || 'SERVER_ERROR', err.message);
     });
