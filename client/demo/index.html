@@ -7,152 +7,288 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <div class="container">
-    <header class="header">
-      <div class="logo-group">
-        <span class="badge">Hackathon Starter</span>
-        <h1>⚡ SyncKit</h1>
+  <div class="app-layout">
+    <!-- Top Navigation Bar -->
+    <header class="navbar">
+      <div class="nav-brand">
+        <span class="brand-badge">SyncKit</span>
+        <div class="brand-title-group">
+          <h1>⚡ SyncKit</h1>
+          <span class="brand-sub">Multiplayer Engine</span>
+        </div>
       </div>
-      <p class="subtitle">A lightweight library to make any webpage multiplayer</p>
+
+      <div class="nav-controls">
+        <!-- User Profile Quick Chip -->
+        <div class="user-chip">
+          <span class="user-avatar-dot" id="my-color-dot"></span>
+          <span id="client-id" class="user-chip-name">Connecting...</span>
+        </div>
+
+        <!-- Global Room Badge -->
+        <div class="status-pill room-pill" id="nav-room-pill" style="display: none;">
+          <span class="room-dot"></span>
+          <span id="nav-room-name">room-1</span>
+        </div>
+
+        <!-- Connection Status Indicator (Requirement 6 & 7) -->
+        <div class="status-pill" id="connection-pill">
+          <span id="status-dot" class="dot disconnected"></span>
+          <span id="status-text">Disconnected</span>
+        </div>
+
+        <!-- Disconnect / Reconnect Button (Test Tool) -->
+        <button id="toggle-connection-btn" class="btn btn-sm btn-outline">🔌 Disconnect Tab</button>
+      </div>
     </header>
 
-    <main class="main-content">
-      <!-- Status Card -->
-      <section class="card status-card">
-        <h2>Connection Status</h2>
-        <div class="status-row">
-          <div class="status-indicator">
-            <span id="status-dot" class="dot disconnected"></span>
-            <span id="status-text">Disconnected</span>
-          </div>
-          <div class="user-count-badge">
-            👥 <span id="user-count">0</span> Online
-          </div>
-        </div>
-        <p class="socket-info">Your ID: <code id="client-id">Not connected</code></p>
-        <div style="margin-top: 0.75rem; display: flex; gap: 0.5rem; align-items: center;">
-          <input type="text" id="display-name-input" placeholder="Your display name..." style="flex: 1; padding: 0.45rem 0.75rem; border-radius: 6px; border: 1px solid var(--border); background: rgba(0,0,0,0.3); color: var(--text-main);" />
-          <button id="update-name-btn" class="btn btn-sm action-btn">Update Name</button>
-        </div>
-        <div style="margin-top: 0.5rem;">
-          <button id="toggle-connection-btn" class="btn btn-sm action-btn">🔌 Disconnect Tab</button>
-        </div>
-      </section>
+    <!-- Global Notice Banners -->
+    <!-- Reconnecting Banner (Requirement 7) -->
+    <div id="reconnecting-banner" class="banner banner-warning" style="display: none;">
+      <div class="banner-content">
+        <span class="banner-spinner"></span>
+        <span><strong>Connection Lost:</strong> SyncKit is attempting automatic reconnection (<span id="reconnect-attempt-count">1</span>)...</span>
+      </div>
+    </div>
 
-      <!-- Room Joining Card -->
-      <section class="card room-card">
-        <h2>🏠 Rooms & Shared State</h2>
-        <p class="subtitle" style="margin-bottom: 1rem;">Join a named room to receive its server-authoritative state.</p>
-        
-        <div class="room-controls">
-          <input type="text" id="room-input" placeholder="Enter room name..." value="room-1" />
-          <button id="join-btn" class="btn primary-btn">Join Room</button>
-        </div>
+    <!-- State Recovery Banner (Requirement 8) -->
+    <div id="recovery-banner" class="banner banner-success" style="display: none;">
+      <div class="banner-content">
+        <span class="banner-icon">🔄</span>
+        <span>
+          <strong>State Recovered!</strong> Authoritative room state (<code id="recovery-version-text">v1</code>) was successfully synchronized from the server after reconnection.
+        </span>
+      </div>
+      <button id="dismiss-recovery-btn" class="btn-icon" title="Dismiss">✕</button>
+    </div>
 
-        <div class="room-details" id="room-details" style="display: none; margin-top: 1.25rem;">
-          <div class="room-meta">
-            <div>Current Room: <strong id="active-room-name">-</strong></div>
-            <div>Members in Room: <span id="active-room-members" class="pill">0</span></div>
-          </div>
-
-          <!-- Active Users Presence Section (Requirement 8) -->
-          <div class="interactive-section">
-            <label class="control-label">👥 Online Members in Room (<span id="presence-count">0</span>):</label>
-            <div id="presence-list" class="presence-list"></div>
-          </div>
-
-          <!-- Live Cursor Sharing Notice (Requirement 1 & 4) -->
-          <div class="interactive-section">
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-              <label class="control-label" style="margin-bottom: 0;">🖱️ Live Cursors</label>
-              <span class="pill" style="background: var(--success); font-size: 0.75rem;">Broadcasting Live</span>
+    <!-- Main Dashboard Container -->
+    <main class="dashboard-container">
+      <!-- Left Column: Interactive Multiplayer Controls -->
+      <div class="dashboard-col">
+        <!-- 1. Room Name & Join Control (Requirement 1) -->
+        <section class="card room-card">
+          <div class="card-header">
+            <div class="card-title-group">
+              <span class="card-icon">🏠</span>
+              <div>
+                <h2>Room Connection</h2>
+                <p class="card-subtitle">Join an isolated multiplayer room</p>
+              </div>
             </div>
-            <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0.35rem;">
-              Move your mouse anywhere on this page! Your cursor and name will be rendered with a unique color in other members' browser tabs.
-            </p>
+            <span class="pill pill-muted" id="room-status-badge">Not in room</span>
           </div>
 
-          <!-- Interactive Shared Counter -->
-          <div class="interactive-section">
-            <label class="control-label">⚡ Shared Counter (Syncs across room)</label>
-            <div class="counter-group">
-              <button id="decrement-btn" class="btn btn-sm action-btn">➖ Decrement</button>
-              <div class="counter-badge"><span id="counter-val">0</span></div>
-              <button id="increment-btn" class="btn btn-sm primary-btn">➕ Increment</button>
+          <div class="room-join-group">
+            <div class="input-with-button">
+              <input type="text" id="room-input" placeholder="Enter room name..." value="room-1" autocomplete="off" />
+              <button id="join-btn" class="btn btn-primary">Join Room</button>
+            </div>
+            
+            <div class="quick-rooms">
+              <span class="quick-label">Quick switch:</span>
+              <button class="chip-btn" data-room="room-1">room-1</button>
+              <button class="chip-btn" data-room="hackathon-alpha">hackathon-alpha</button>
+              <button class="chip-btn" data-room="collab-hub">collab-hub</button>
             </div>
           </div>
+        </section>
 
-          <!-- Interactive Shared Note -->
-          <div class="interactive-section">
-            <label class="control-label">📝 Shared Room Note</label>
-            <div class="room-controls">
-              <input type="text" id="shared-text-input" placeholder="Type a message to sync with the room..." />
-              <button id="update-text-btn" class="btn primary-btn">Update</button>
+        <!-- Room Details & Interactive Controls (Revealed upon joining) -->
+        <div id="room-details" style="display: none;" class="room-active-wrapper">
+          <!-- 2. Shared Counter (Requirement 2) -->
+          <section class="card counter-card">
+            <div class="card-header">
+              <div class="card-title-group">
+                <span class="card-icon">⚡</span>
+                <div>
+                  <h2>Shared Counter</h2>
+                  <p class="card-subtitle">Real-time room-synchronized integer</p>
+                </div>
+              </div>
+              <span class="pill pill-info">v<span id="counter-version-val">1</span></span>
+            </div>
+
+            <div class="counter-display-wrapper">
+              <button id="decrement-btn" class="counter-btn minus-btn" title="Decrement">
+                <span>−</span>
+              </button>
+              <div class="counter-value-container">
+                <span id="counter-val" class="counter-number">0</span>
+                <span class="counter-caption">Room Authoritative Value</span>
+              </div>
+              <button id="increment-btn" class="counter-btn plus-btn" title="Increment">
+                <span>+</span>
+              </button>
+            </div>
+          </section>
+
+          <!-- 3. Shared Text Area / Note (Requirement 3) -->
+          <section class="card note-card">
+            <div class="card-header">
+              <div class="card-title-group">
+                <span class="card-icon">📝</span>
+                <div>
+                  <h2>Shared Room Note</h2>
+                  <p class="card-subtitle">Collaborative shared message synchronized in real time</p>
+                </div>
+              </div>
+              <span id="text-sync-indicator" class="pill pill-success">Synced</span>
+            </div>
+
+            <div class="note-editor-wrapper">
+              <textarea id="shared-text-area" class="shared-textarea" placeholder="Type a message or notes to sync with all users in this room..." rows="4"></textarea>
+              <!-- Hidden input for backwards-compatibility with existing tests -->
+              <input type="hidden" id="shared-text-input" />
+              
+              <div class="note-footer">
+                <span id="note-meta-text" class="text-meta">Synced with room state</span>
+                <button id="update-text-btn" class="btn btn-sm btn-primary">Sync Note Now</button>
+              </div>
+            </div>
+          </section>
+
+          <!-- 5. Live Cursor Playground (Requirement 5) -->
+          <section class="card cursor-card">
+            <div class="card-header">
+              <div class="card-title-group">
+                <span class="card-icon">🖱️</span>
+                <div>
+                  <h2>Live Cursors</h2>
+                  <p class="card-subtitle">Real-time mouse pointer tracking</p>
+                </div>
+              </div>
+              <span class="pill pill-success">Streaming</span>
+            </div>
+
+            <div class="cursor-playground" id="cursor-playground">
+              <div class="playground-inner">
+                <span class="playground-icon">🎯</span>
+                <p class="playground-title">Live Cursor Zone</p>
+                <p class="playground-desc">
+                  Move your mouse across this area or the entire page. Your pointer and display name stream automatically to other tabs in this room!
+                </p>
+                <div class="cursor-coords-pill">
+                  Local cursor: <code id="local-cursor-coords">X: 0, Y: 0</code>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+
+      <!-- Right Column: Presence, State Inspector & Diagnostics -->
+      <div class="dashboard-col">
+        <!-- 4. Room Presence (Requirement 4) -->
+        <section class="card presence-card">
+          <div class="card-header">
+            <div class="card-title-group">
+              <span class="card-icon">👥</span>
+              <div>
+                <h2>Active Members</h2>
+                <p class="card-subtitle">Real-time online presence in this room</p>
+              </div>
+            </div>
+            <span class="pill pill-primary"><span id="presence-count">0</span> Online</span>
+          </div>
+
+          <!-- Display Name Quick Edit -->
+          <div class="display-name-box">
+            <label class="control-label" for="display-name-input">Your Display Name:</label>
+            <div class="input-with-button">
+              <input type="text" id="display-name-input" placeholder="Enter your name..." maxlength="30" />
+              <button id="update-name-btn" class="btn btn-sm btn-secondary">Update Name</button>
             </div>
           </div>
 
-          <!-- State Request & Inspection -->
-          <div class="state-preview" style="margin-top: 1rem;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
-              <span style="font-size: 0.85rem; color: var(--text-muted);">Authoritative Server State (v<span id="state-version">1</span>):</span>
+          <!-- Online Members List -->
+          <div class="presence-section">
+            <label class="control-label">Members Currently in Room:</label>
+            <div id="presence-list" class="presence-grid">
+              <span class="empty-notice">Join a room to see online members.</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- Authoritative Server State Inspector -->
+        <section class="card state-card">
+          <div class="card-header">
+            <div class="card-title-group">
+              <span class="card-icon">🔍</span>
+              <div>
+                <h2>Server State Inspector</h2>
+                <p class="card-subtitle">Authoritative single source of truth</p>
+              </div>
+            </div>
+            <div class="state-actions">
               <button id="refresh-state-btn" class="btn-text">🔄 Fetch State</button>
+              <span class="pill pill-info">v<span id="state-version">1</span></span>
             </div>
-            <pre><code id="room-state-output">{}</code></pre>
           </div>
 
-          <div id="room-feed" class="room-feed"></div>
-        </div>
-      </section>
+          <div class="state-preview-box">
+            <pre><code id="room-state-output">{\n  "status": "Join a room to inspect state"\n}</code></pre>
+          </div>
 
-      <!-- How to test multiplayer -->
-      <section class="card test-card">
-        <h2>🧪 Test It Out</h2>
-        <p>Open this page in <strong>two or more browser tabs</strong> side-by-side:</p>
-        <div class="instruction-box">
-          <code>http://localhost:3000/demo</code>
-        </div>
-        <p class="hint">Join the same room (e.g. <code>room-1</code>) in both tabs to test room presence and state syncing!</p>
-      </section>
+          <div class="room-meta-row">
+            <div>Current Room: <strong id="active-room-name">-</strong></div>
+            <div>Active Sockets: <span id="active-room-members" class="badge-number">0</span></div>
+            <div>Global Online: <span id="user-count" class="badge-number">0</span></div>
+          </div>
+        </section>
 
-      <!-- Quick Start Snippet -->
-      <section class="card code-card">
-        <h2>💻 How to Use SyncKit (Public API)</h2>
-        <pre><code>&lt;!-- 1. Load Socket.IO and SyncKit --&gt;
-&lt;script src="/socket.io/socket.io.js"&gt;&lt;/script&gt;
-&lt;script src="/synckit/synckit.js"&gt;&lt;/script&gt;
+        <!-- Live Activity Log & Status -->
+        <section class="card activity-card">
+          <div class="card-header">
+            <div class="card-title-group">
+              <span class="card-icon">📡</span>
+              <div>
+                <h2>Activity & Feed</h2>
+                <p class="card-subtitle">Real-time room events and status</p>
+              </div>
+            </div>
+            <span class="pill pill-muted">Live</span>
+          </div>
 
-&lt;!-- 2. Use in your JavaScript --&gt;
-&lt;script&gt;
-  const sync = new SyncKit();
-  sync.joinRoom('my-room');
+          <div id="room-feed" class="activity-hero">Ready. Join a room to begin.</div>
+          <ul id="activity-log-list" class="activity-log">
+            <li class="log-item"><span class="log-time">Now</span> Page loaded. SyncKit initialized.</li>
+          </ul>
+        </section>
 
-  // React to state changes
-  sync.onStateChange((state) => {
-    console.log('Room state:', state);
-  });
+        <!-- Multi-Tab Quick Testing Card -->
+        <section class="card guide-card">
+          <div class="card-header">
+            <div class="card-title-group">
+              <span class="card-icon">🧪</span>
+              <div>
+                <h2>How to Test Multiplayer</h2>
+                <p class="card-subtitle">Experience true real-time synchronization</p>
+              </div>
+            </div>
+          </div>
 
-  // Request state updates
-  sync.updateState({ count: 1 });
-&lt;/script&gt;</code></pre>
-        <p style="margin-top: 0.75rem; font-size: 0.9rem; text-align: center;">
-          <a href="/minimal-example.html" target="_blank" style="color: var(--primary); text-decoration: underline;">
-            📄 View Standalone Minimal Example Webpage
-          </a>
-        </p>
-      </section>
+          <ol class="guide-steps">
+            <li>Open this URL in <strong>two or three side-by-side browser tabs</strong>:
+              <div class="copy-url-box"><code>http://localhost:3000/demo</code></div>
+            </li>
+            <li>In each tab, keep the room name <code>room-1</code> and click <strong>Join Room</strong>.</li>
+            <li>Move your cursor in one tab to watch the colored live pointer glide across the other tabs.</li>
+            <li>Click <strong>+ Increment</strong> or type in the shared note to see instantaneous state sync.</li>
+            <li>Click <strong>🔌 Disconnect Tab</strong> in Tab 2, increment in Tab 1, then reconnect Tab 2 to verify <strong>automatic state recovery</strong>!</li>
+          </ol>
+        </section>
+      </div>
     </main>
 
-    <footer class="footer">
-      <p>Built for the 12-hour Hackathon • Project SyncKit</p>
+    <footer class="app-footer">
+      <p>SyncKit Real-Time Engine • Built for the 12-Hour Hackathon • Clean Public API</p>
     </footer>
   </div>
 
   <!-- Scripts -->
-  <!-- 1. Socket.IO client library automatically provided by the server -->
   <script src="/socket.io/socket.io.js"></script>
-  <!-- 2. Reusable SyncKit library -->
   <script src="/synckit/synckit.js"></script>
-  <!-- 3. Demo application logic -->
   <script src="demo.js"></script>
 </body>
 </html>
