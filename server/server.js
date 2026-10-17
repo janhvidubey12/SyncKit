@@ -41,10 +41,18 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Redirect root to demo page
+// Redirect root to demo page, preserving query parameters (e.g. ?room=alpha)
 app.get('/', (req, res) => {
-  res.redirect('/demo');
+  const query = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+  res.redirect('/demo' + query);
 });
+
+// Dedicated room route support (e.g. /room/hackathon-team)
+app.get('/room/:roomId', (req, res) => {
+  const roomId = encodeURIComponent(req.params.roomId);
+  res.redirect(`/demo?room=${roomId}`);
+});
+
 
 // ==========================================
 // 4. Authoritative In-Memory Room State Store
@@ -113,8 +121,8 @@ function validateStateUpdates(updates) {
 
     // 4. Validate strings (prevent oversized payloads)
     if (typeof value === 'string') {
-      if (value.length > 5000) {
-        return { valid: false, error: `String for key "${key}" exceeds max length of 5000 characters.` };
+      if (value.length > 20000) {
+        return { valid: false, error: `String for key "${key}" exceeds max length of 20000 characters.` };
       }
       sanitized[key] = value;
       continue;
@@ -170,6 +178,8 @@ function getOrCreateRoom(roomId) {
       state: {
         count: 0,
         text: 'Welcome to SyncKit!',
+        notes: '# Room Notes\n\nWelcome to your collaborative workspace! Type notes here to sync in real time across all members in this room.',
+        notesList: [],
         version: 1,
         lastUpdated: new Date().toISOString(),
         lastUpdatedBy: 'system',
@@ -180,6 +190,7 @@ function getOrCreateRoom(roomId) {
   }
   return { room: rooms[roomId], isNew };
 }
+
 
 // ==========================================
 // 5. Socket.IO Connection & Event Handlers
@@ -417,6 +428,25 @@ io.on('connection', (socket) => {
           presence: activePresenceList,
         });
       }
+    }
+  });
+
+  // ----------------------------------------------------
+  // EVENT: send-reaction
+  // Broadcasts ephemeral reaction to other members in the room (Requirement 4)
+  // ----------------------------------------------------
+  socket.on('send-reaction', (payload) => {
+    const roomId = payload?.roomId || Array.from(socket.currentRooms)[0];
+    if (roomId && rooms[roomId] && rooms[roomId].members.has(socket.id)) {
+      const emoji = typeof payload?.emoji === 'string' ? payload.emoji.slice(0, 10) : '❤️';
+      // Broadcast strictly to other clients in this specific room (never echo back to sender)
+      socket.to(roomId).emit('reaction-received', {
+        userId: socket.id,
+        sessionId: socket.sessionId || payload?.sessionId,
+        displayName: socket.displayName || payload?.displayName || 'Anonymous',
+        emoji,
+        timestamp: Date.now(),
+      });
     }
   });
 

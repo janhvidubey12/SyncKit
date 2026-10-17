@@ -1,13 +1,13 @@
 // client/demo/demo.js
-// SyncKit Demo Application
-// Clean, modern, professional client implementation utilizing the public SyncKit API.
-// Strictly uses real-time library synchronization (no simulated users, zero mock sync).
+// SyncKit - Real-Time Collaborative Workspace
+// Black and Red Theme with Shared Multi-Member Room Notes
+// Demonstrates genuine real-time multiplayer synchronization using the clean SyncKit API.
 
 document.addEventListener('DOMContentLoaded', () => {
   // ==========================================
   // 1. UI Elements
   // ==========================================
-  // Navigation & Connection
+  // Navigation & Status
   const statusDot = document.getElementById('status-dot');
   const statusText = document.getElementById('status-text');
   const userCount = document.getElementById('user-count');
@@ -24,50 +24,126 @@ document.addEventListener('DOMContentLoaded', () => {
   const recoveryVersionText = document.getElementById('recovery-version-text');
   const dismissRecoveryBtn = document.getElementById('dismiss-recovery-btn');
 
-  // Room Join
+  // Room Join & Navigation
   const roomInput = document.getElementById('room-input');
   const joinBtn = document.getElementById('join-btn');
   const roomStatusBadge = document.getElementById('room-status-badge');
-  const chipButtons = document.querySelectorAll('.chip-btn');
-  const roomDetails = document.getElementById('room-details');
+  const roomChips = document.querySelectorAll('.room-chip');
+  const notesRoomBadge = document.getElementById('notes-room-badge');
   const activeRoomName = document.getElementById('active-room-name');
   const activeRoomMembers = document.getElementById('active-room-members');
+  const roomDetails = document.getElementById('room-details');
 
-  // Presence
+  // Multi-Member Shared Room Notes Elements
+  const openCreateNoteBtn = document.getElementById('open-create-note-btn');
+  const newNoteForm = document.getElementById('new-note-form');
+  const cancelCreateNoteBtn = document.getElementById('cancel-create-note-btn');
+  const newNoteTitle = document.getElementById('new-note-title');
+  const newNoteContent = document.getElementById('new-note-content');
+  const cancelNoteBtn = document.getElementById('cancel-note-btn');
+  const saveNoteBtn = document.getElementById('save-note-btn');
+  const notesCardsList = document.getElementById('notes-cards-list');
+  const notesEmptyState = document.getElementById('notes-empty-state');
+  const notesCountBadge = document.getElementById('notes-count-badge');
+  const textSyncIndicator = document.getElementById('text-sync-indicator');
+
+  // Legacy elements preserved for test compatibility
+  const sharedTextArea = document.getElementById('shared-text-area');
+  const sharedTextInput = document.getElementById('shared-text-input');
+  const updateTextBtn = document.getElementById('update-text-btn');
+  const noteMetaText = document.getElementById('note-meta-text');
+  const notesWordCount = document.getElementById('notes-word-count');
+
+  // Presence & Identity
   const displayNameInput = document.getElementById('display-name-input');
   const updateNameBtn = document.getElementById('update-name-btn');
   const presenceCount = document.getElementById('presence-count');
   const presenceList = document.getElementById('presence-list');
 
-  // Counter
+  // Collaboration Board & Cursors
+  const collabBoard = document.getElementById('collab-board');
+  const remoteCursorsLayer = document.getElementById('remote-cursors-layer');
+  const localCursorCoords = document.getElementById('local-cursor-coords');
+
+  // Counter Widget
   const counterVal = document.getElementById('counter-val');
   const counterVersionVal = document.getElementById('counter-version-val');
   const decrementBtn = document.getElementById('decrement-btn');
   const incrementBtn = document.getElementById('increment-btn');
 
-  // Shared Note
-  const sharedTextArea = document.getElementById('shared-text-area');
-  const sharedTextInput = document.getElementById('shared-text-input');
-  const updateTextBtn = document.getElementById('update-text-btn');
-  const textSyncIndicator = document.getElementById('text-sync-indicator');
-  const noteMetaText = document.getElementById('note-meta-text');
+  // Reaction Cards
+  const reactionCards = document.querySelectorAll('.reaction-card');
 
-  // Cursors
-  const localCursorCoords = document.getElementById('local-cursor-coords');
-
-  // State Inspector & Logs
+  // State Inspector & Ticker
   const roomStateOutput = document.getElementById('room-state-output');
   const stateVersion = document.getElementById('state-version');
   const refreshStateBtn = document.getElementById('refresh-state-btn');
   const roomFeed = document.getElementById('room-feed');
   const activityLogList = document.getElementById('activity-log-list');
 
+  // Invite Modal Elements
+  const inviteBtn = document.getElementById('invite-btn');
+  const inviteModal = document.getElementById('invite-modal');
+  const closeInviteBtn = document.getElementById('close-invite-btn');
+  const inviteLinkInput = document.getElementById('invite-link-input');
+  const copyInviteBtn = document.getElementById('copy-invite-btn');
+  const copyBtnText = document.getElementById('copy-btn-text');
+  const copyBtnIcon = document.getElementById('copy-btn-icon');
+  const inviteToast = document.getElementById('invite-toast');
+  const toastMessage = document.getElementById('toast-message');
+
   // ==========================================
-  // 2. Initialize SyncKit Library
+  // 2. URL Parameters & Invite Link Helper
   // ==========================================
+  function sanitizeRoomId(name) {
+    if (!name || typeof name !== 'string') return 'room-1';
+    const cleaned = name.trim().replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40);
+    return cleaned || 'room-1';
+  }
+
+  function getRoomFromUrl() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const roomParam = urlParams.get('room');
+    if (roomParam && roomParam.trim()) {
+      return sanitizeRoomId(roomParam);
+    }
+    const pathParts = window.location.pathname.split('/').filter(Boolean);
+    if (pathParts[0] === 'room' && pathParts[1]) {
+      return sanitizeRoomId(pathParts[1]);
+    }
+    if (window.location.hash) {
+      const hash = window.location.hash.replace(/^#/, '');
+      if (hash.startsWith('room=')) {
+        return sanitizeRoomId(hash.slice(5));
+      }
+      if (hash) return sanitizeRoomId(hash);
+    }
+    return 'room-1';
+  }
+
+  function updateBrowserUrl(roomId) {
+    if (typeof window !== 'undefined' && window.history && window.history.replaceState) {
+      const url = new URL(window.location.href);
+      url.searchParams.set('room', roomId);
+      window.history.replaceState({ room: roomId }, '', url.toString());
+    }
+  }
+
+  function getFullInviteUrl(roomId) {
+    const origin = window.location.origin || 'http://localhost:3000';
+    return `${origin}/demo?room=${encodeURIComponent(roomId || sync.getRoom() || 'room-1')}`;
+  }
+
+  // ==========================================
+  // 3. Initialize SyncKit Library
+  // ==========================================
+  const initialRoom = getRoomFromUrl();
+  if (roomInput) roomInput.value = initialRoom;
+  if (notesRoomBadge) notesRoomBadge.textContent = initialRoom;
+  if (navRoomName) navRoomName.textContent = initialRoom;
+
   const sync = new SyncKit({ autoConnect: true });
 
-  // Update initial identity UI
   function updateMyIdentityUI() {
     const name = sync.getDisplayName();
     const id = sync.getSessionId();
@@ -79,7 +155,6 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   updateMyIdentityUI();
 
-  // Activity logger helper
   function addLog(msg) {
     if (roomFeed) roomFeed.textContent = msg;
     if (activityLogList) {
@@ -95,7 +170,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // ==========================================
-  // 3. Live Cursor Tracking & Rendering (Requirement 5)
+  // 4. Live Cursor Sharing
   // ==========================================
   const remoteCursors = new Map(); // sessionId -> DOMElement
 
@@ -107,11 +182,15 @@ document.addEventListener('DOMContentLoaded', () => {
       cursor.id = `cursor-${sessionId}`;
       cursor.innerHTML = `
         <svg class="cursor-pointer" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path d="M0 0L7.5 18.5L10.5 11L18 8L0 0Z" fill="${color}" stroke="#0b0f19" stroke-width="1.5" stroke-linejoin="round"/>
+          <path d="M0 0L7.5 18.5L10.5 11L18 8L0 0Z" fill="${color || '#ef4444'}" stroke="#060608" stroke-width="1.5" stroke-linejoin="round"/>
         </svg>
-        <span class="cursor-label" style="background-color: ${color};">${displayName || 'Anonymous'}</span>
+        <span class="cursor-label" style="background-color: ${color || '#ef4444'};">${displayName || 'Anonymous'}</span>
       `;
-      document.body.appendChild(cursor);
+      if (remoteCursorsLayer) {
+        remoteCursorsLayer.appendChild(cursor);
+      } else {
+        document.body.appendChild(cursor);
+      }
       remoteCursors.set(sessionId, cursor);
     }
     return cursor;
@@ -132,22 +211,50 @@ document.addEventListener('DOMContentLoaded', () => {
     remoteCursors.clear();
   }
 
-  // Capture mouse movement across page (throttled inside SyncKit to ~30ms)
-  window.addEventListener('mousemove', (e) => {
-    if (localCursorCoords) {
-      localCursorCoords.textContent = `X: ${e.clientX}, Y: ${e.clientY}`;
-    }
-    if (sync.isConnected() && sync.getRoom()) {
-      sync.sendCursor({ x: e.clientX, y: e.clientY });
-    }
-  });
+  // Capture cursor movements within the collaborative surface
+  if (collabBoard) {
+    collabBoard.addEventListener('mousemove', (e) => {
+      const rect = collabBoard.getBoundingClientRect();
+      const relX = Math.round(e.clientX - rect.left);
+      const relY = Math.round(e.clientY - rect.top);
 
-  // Render incoming cursors from other room members
-  sync.onCursorMove(({ sessionId, displayName, x, y, color }) => {
+      if (localCursorCoords) {
+        localCursorCoords.textContent = `Cursor: X: ${relX}, Y: ${relY}`;
+      }
+
+      if (sync.isConnected() && sync.getRoom()) {
+        const pctX = rect.width > 0 ? relX / rect.width : 0;
+        const pctY = rect.height > 0 ? relY / rect.height : 0;
+        sync.sendCursor({
+          x: relX,
+          y: relY,
+          data: { pctX, pctY },
+        });
+      }
+    });
+
+    window.addEventListener('mousemove', (e) => {
+      if (!localCursorCoords) return;
+      if (e.target && !collabBoard.contains(e.target)) {
+        localCursorCoords.textContent = `Window: X: ${e.clientX}, Y: ${e.clientY}`;
+      }
+    });
+  }
+
+  // Render incoming remote cursors
+  sync.onCursorMove(({ sessionId, displayName, x, y, color, data }) => {
     if (sessionId === sync.getSessionId()) return;
 
     const cursor = getOrCreateCursor(sessionId, displayName, color);
-    cursor.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+
+    if (collabBoard && data && typeof data.pctX === 'number' && typeof data.pctY === 'number') {
+      const rect = collabBoard.getBoundingClientRect();
+      const posX = Math.round(data.pctX * rect.width);
+      const posY = Math.round(data.pctY * rect.height);
+      cursor.style.transform = `translate3d(${posX}px, ${posY}px, 0)`;
+    } else {
+      cursor.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+    }
 
     const label = cursor.querySelector('.cursor-label');
     if (label && displayName && label.textContent !== displayName) {
@@ -156,32 +263,300 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // ==========================================
-  // 4. State Rendering & Inspection
+  // 5. Shared Room Notes Collection for Every Member
+  // ==========================================
+  let activeEditingNoteId = null; // Track note currently being inline edited
+  let editDebounceTimer = null;
+
+  function setSyncStatus(status, text) {
+    if (!textSyncIndicator) return;
+    textSyncIndicator.className = `sync-badge ${status}`;
+    textSyncIndicator.textContent = text;
+  }
+
+  function formatRelativeTime(dateStr) {
+    if (!dateStr) return 'Just now';
+    try {
+      const d = new Date(dateStr);
+      if (isNaN(d.getTime())) return 'Recently';
+      const now = new Date();
+      const diffSec = Math.floor((now - d) / 1000);
+      if (diffSec < 10) return 'Just now';
+      if (diffSec < 60) return `${diffSec}s ago`;
+      const diffMin = Math.floor(diffSec / 60);
+      if (diffMin < 60) return `${diffMin}m ago`;
+      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    } catch (e) {
+      return 'Recently';
+    }
+  }
+
+  // Toggle New Note Form
+  if (openCreateNoteBtn) {
+    openCreateNoteBtn.addEventListener('click', () => {
+      if (!newNoteForm) return;
+      const isHidden = newNoteForm.style.display === 'none';
+      newNoteForm.style.display = isHidden ? 'flex' : 'none';
+      if (isHidden && newNoteContent) {
+        newNoteContent.focus();
+      }
+    });
+  }
+
+  function closeNewNoteForm() {
+    if (newNoteForm) newNoteForm.style.display = 'none';
+    if (newNoteTitle) newNoteTitle.value = '';
+    if (newNoteContent) newNoteContent.value = '';
+  }
+
+  if (cancelCreateNoteBtn) cancelCreateNoteBtn.addEventListener('click', closeNewNoteForm);
+  if (cancelNoteBtn) cancelNoteBtn.addEventListener('click', closeNewNoteForm);
+
+  // Publish New Note
+  if (saveNoteBtn) {
+    saveNoteBtn.addEventListener('click', () => {
+      const content = newNoteContent ? newNoteContent.value.trim() : '';
+      const title = newNoteTitle ? newNoteTitle.value.trim() : '';
+
+      if (!content) {
+        alert('Please write some content for your note.');
+        if (newNoteContent) newNoteContent.focus();
+        return;
+      }
+
+      setSyncStatus('saving', '◌ Publishing note...');
+      sync.createNote({ title, content }, (res) => {
+        if (res && res.success) {
+          closeNewNoteForm();
+          setSyncStatus('synced', `● Synced (v${res.version || sync.getState().version || 1})`);
+          addLog(`📝 Published note "${title || content.slice(0, 20)}..." to room.`);
+        } else {
+          setSyncStatus('offline', '❌ Error saving');
+          alert('Failed to publish note. Please check your connection.');
+        }
+      });
+    });
+  }
+
+  // Render Note Cards List
+  function renderNotesList(state) {
+    if (!notesCardsList) return;
+
+    let notes = [];
+    if (Array.isArray(state?.notesList)) {
+      notes = state.notesList;
+    } else if (state?.notes || state?.text) {
+      // Backward compatibility fallback: synthesize a single note card from legacy text
+      const content = state.notes || state.text;
+      notes = [{
+        id: 'note_legacy_primary',
+        authorId: state.lastUpdatedBy || 'system',
+        authorName: state.lastUpdatedBy === sync.getUserId() ? sync.getDisplayName() : 'Collaborator',
+        authorColor: '#ef4444',
+        title: 'Room Note',
+        content: content,
+        createdAt: state.lastUpdated || new Date().toISOString(),
+        updatedAt: state.lastUpdated || new Date().toISOString(),
+      }];
+    }
+
+    // Update count badge
+    if (notesCountBadge) {
+      notesCountBadge.textContent = `${notes.length} ${notes.length === 1 ? 'note' : 'notes'}`;
+    }
+
+    // Update legacy hidden fields
+    const serializedNotes = notes.map((n) => n.content).join('\n\n');
+    if (sharedTextArea) sharedTextArea.value = serializedNotes;
+    if (sharedTextInput) sharedTextInput.value = serializedNotes;
+
+    // Empty state
+    if (notes.length === 0) {
+      notesCardsList.innerHTML = `
+        <div id="notes-empty-state" class="notes-empty-card">
+          <span class="empty-icon">📋</span>
+          <h4 class="empty-title">No Notes in This Room</h4>
+          <p class="empty-desc">Click <strong>"Create Note"</strong> above to share a note with all members in this room in real time.</p>
+        </div>
+      `;
+      return;
+    }
+
+    // If user is currently editing an active note, preserve their active textarea to avoid losing focus
+    if (activeEditingNoteId) {
+      const activeTextarea = document.getElementById(`edit-textarea-${activeEditingNoteId}`);
+      if (activeTextarea && document.activeElement === activeTextarea) {
+        // Only re-render non-active notes or update timestamps
+        return;
+      }
+    }
+
+    // Build cards HTML
+    notesCardsList.innerHTML = '';
+    notes.forEach((note) => {
+      const isMyNote = note.authorId === sync.getSessionId();
+      const authorColor = note.authorColor || SyncKit.getUserColor(note.authorId);
+      const isCurrentlyEditing = activeEditingNoteId === note.id;
+
+      const card = document.createElement('div');
+      card.className = `note-item-card ${isMyNote ? 'is-own-note' : ''}`;
+      card.id = `note-card-${note.id}`;
+
+      if (isCurrentlyEditing) {
+        // Edit mode card
+        card.innerHTML = `
+          <div class="note-card-top">
+            <div class="note-author-info">
+              <span class="note-author-dot" style="background-color: ${authorColor};"></span>
+              <span class="note-author-name">${note.authorName || 'Member'}</span>
+              ${isMyNote ? '<span class="note-you-pill">You</span>' : ''}
+            </div>
+            <span class="note-time">Editing</span>
+          </div>
+          <input type="text" id="edit-title-${note.id}" class="note-input-title" value="${escapeHtml(note.title || '')}" placeholder="Title (optional)" />
+          <textarea id="edit-textarea-${note.id}" class="note-edit-area" rows="4">${escapeHtml(note.content || '')}</textarea>
+          <div class="new-note-actions" style="margin-top: 0.4rem;">
+            <button class="btn btn-xs btn-outline cancel-edit-btn" data-id="${note.id}">Cancel</button>
+            <button class="btn btn-xs btn-primary save-edit-btn" data-id="${note.id}">Save Changes</button>
+          </div>
+        `;
+      } else {
+        // Normal view card
+        card.innerHTML = `
+          <div class="note-card-top">
+            <div class="note-author-info">
+              <span class="note-author-dot" style="background-color: ${authorColor};"></span>
+              <span class="note-author-name">${note.authorName || 'Member'}</span>
+              ${isMyNote ? '<span class="note-you-pill">You</span>' : ''}
+            </div>
+            <span class="note-time">${formatRelativeTime(note.updatedAt || note.createdAt)}</span>
+          </div>
+          ${note.title ? `<div class="note-card-title">${escapeHtml(note.title)}</div>` : ''}
+          <div class="note-card-body">${escapeHtml(note.content || '')}</div>
+          <div class="note-card-footer">
+            <span class="note-shared-badge" title="Collaborative: All room members can see and edit this note">
+              🌐 Room Shared
+            </span>
+            <div class="note-actions-group">
+              <button class="btn-note-action edit-note-btn" data-id="${note.id}" title="Edit note (collaborative)">✏️ Edit</button>
+              <button class="btn-note-action delete delete-note-btn" data-id="${note.id}" title="Delete note (collaborative)">🗑️ Delete</button>
+            </div>
+          </div>
+        `;
+      }
+
+      notesCardsList.appendChild(card);
+    });
+
+    // Attach listeners for Edit, Delete, Save
+    attachNoteCardActions();
+  }
+
+  function escapeHtml(text) {
+    if (!text) return '';
+    return String(text)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+
+  function attachNoteCardActions() {
+    // Edit buttons
+    document.querySelectorAll('.edit-note-btn').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        const id = e.currentTarget.getAttribute('data-id');
+        activeEditingNoteId = id;
+        renderNotesList(sync.getState());
+        const textarea = document.getElementById(`edit-textarea-${id}`);
+        if (textarea) {
+          textarea.focus();
+          textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+        }
+      });
+    });
+
+    // Cancel edit buttons
+    document.querySelectorAll('.cancel-edit-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        activeEditingNoteId = null;
+        renderNotesList(sync.getState());
+      });
+    });
+
+    // Save edit buttons
+    document.querySelectorAll('.save-edit-btn').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        const id = e.currentTarget.getAttribute('data-id');
+        const titleInput = document.getElementById(`edit-title-${id}`);
+        const contentTextarea = document.getElementById(`edit-textarea-${id}`);
+        const updatedTitle = titleInput ? titleInput.value.trim() : '';
+        const updatedContent = contentTextarea ? contentTextarea.value.trim() : '';
+
+        if (!updatedContent) {
+          alert('Note content cannot be empty. Click Delete if you wish to remove it.');
+          return;
+        }
+
+        setSyncStatus('saving', '◌ Saving changes...');
+        sync.editNote(id, { title: updatedTitle, content: updatedContent }, (res) => {
+          activeEditingNoteId = null;
+          if (res && res.success) {
+            setSyncStatus('synced', `● Synced (v${res.version || sync.getState().version || 1})`);
+            addLog(`✏️ Updated note "${updatedTitle || updatedContent.slice(0, 20)}...".`);
+          } else {
+            setSyncStatus('offline', '❌ Error saving');
+          }
+        });
+      });
+    });
+
+    // Delete buttons
+    document.querySelectorAll('.delete-note-btn').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        const id = e.currentTarget.getAttribute('data-id');
+        if (confirm('Delete this note from the room? All members will see it removed.')) {
+          setSyncStatus('saving', '◌ Deleting note...');
+          sync.deleteNote(id, (res) => {
+            if (res && res.success) {
+              setSyncStatus('synced', `● Synced (v${res.version || sync.getState().version || 1})`);
+              addLog('🗑️ Deleted note from room.');
+            } else {
+              setSyncStatus('offline', '❌ Error deleting');
+            }
+          });
+        }
+      });
+    });
+  }
+
+  // ==========================================
+  // 6. State Rendering & Inspection
   // ==========================================
   function renderState(state) {
     if (!state) return;
     const v = state.version ?? 1;
 
+    // Counter Widget
     if (counterVal) counterVal.textContent = state.count ?? 0;
     if (counterVersionVal) counterVersionVal.textContent = v;
     if (stateVersion) stateVersion.textContent = v;
     if (roomStateOutput) roomStateOutput.textContent = JSON.stringify(state, null, 2);
 
-    if (typeof state.text === 'string') {
-      if (sharedTextInput) sharedTextInput.value = state.text;
-      if (sharedTextArea && document.activeElement !== sharedTextArea) {
-        sharedTextArea.value = state.text;
-      }
-    }
+    // Multi-member room notes
+    renderNotesList(state);
 
     if (noteMetaText) {
-      const editor = state.lastUpdatedBy === sync.getUserId() ? 'You' : `Socket ${String(state.lastUpdatedBy).slice(0, 6)}`;
-      noteMetaText.textContent = `Last modified by ${editor} (v${v})`;
+      const editor = state.lastUpdatedBy === sync.getUserId() ? 'You' : `User ${String(state.lastUpdatedBy).slice(0, 6)}`;
+      noteMetaText.textContent = `State v${v} • Last updated by ${editor}`;
     }
+
+    setSyncStatus('synced', `● Synced (v${v})`);
   }
 
   // ==========================================
-  // 5. Connection Status & Reconnecting Handlers (Requirements 6, 7, 8)
+  // 7. Connection Status & Reconnecting
   // ==========================================
   sync.onStatusChange((status, details) => {
     switch (status) {
@@ -190,6 +565,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (statusText) statusText.textContent = 'Connected';
         if (toggleConnectionBtn) toggleConnectionBtn.textContent = '🔌 Disconnect Tab';
         if (reconnectingBanner) reconnectingBanner.style.display = 'none';
+        setSyncStatus('synced', `● Synced (v${sync.getState().version || 1})`);
         updateMyIdentityUI();
         addLog(`Connected to SyncKit server (Socket ID: ${sync.getUserId() || details?.socketId})`);
         break;
@@ -202,6 +578,7 @@ document.addEventListener('DOMContentLoaded', () => {
           reconnectingBanner.style.display = 'flex';
           if (reconnectAttemptCount) reconnectAttemptCount.textContent = details?.attempt || 1;
         }
+        setSyncStatus('offline', '⚠️ Reconnecting...');
         addLog('⚠️ Connection dropped. Attempting automatic reconnection...');
         break;
 
@@ -212,11 +589,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (reconnectingBanner) reconnectingBanner.style.display = 'none';
         updateMyIdentityUI();
 
-        // Requirement 8: State recovery completion notice
         if (details?.recovered) {
           showRecoveryBanner(sync.getState().version || 1);
         }
-        addLog('🔄 Successfully reconnected! Latest room state recovered from server.');
+        addLog('🔄 Successfully reconnected! Authoritative room state and notes recovered from server.');
         break;
 
       case 'disconnected':
@@ -225,6 +601,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (statusText) statusText.textContent = 'Disconnected';
         if (toggleConnectionBtn) toggleConnectionBtn.textContent = '⚡ Reconnect Tab';
         if (reconnectingBanner) reconnectingBanner.style.display = 'none';
+        setSyncStatus('offline', '● Offline');
         clearAllCursors();
         addLog('🔌 Disconnected from server.');
         break;
@@ -242,16 +619,13 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // ==========================================
-  // 6. Visible State Recovery Banner (Requirement 8)
-  // ==========================================
+  // State Recovery Banner
   function showRecoveryBanner(version) {
     if (recoveryBanner) {
       if (recoveryVersionText) recoveryVersionText.textContent = `v${version}`;
       recoveryBanner.style.display = 'flex';
       addLog(`♻️ State recovery complete: Room state restored to v${version}.`);
 
-      // Auto dismiss after 9 seconds if not manually closed
       setTimeout(() => {
         if (recoveryBanner) recoveryBanner.style.display = 'none';
       }, 9000);
@@ -264,31 +638,30 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // ==========================================
-  // 7. State Changes Subscription
-  // ==========================================
+  // State Changes Subscription
   sync.onStateChange((state, meta) => {
-    if (roomDetails) roomDetails.style.display = 'flex';
+    if (roomDetails) roomDetails.style.display = 'block';
     if (activeRoomName) activeRoomName.textContent = sync.getRoom();
+    if (notesRoomBadge) notesRoomBadge.textContent = sync.getRoom();
     renderState(state);
 
     if (meta.recovered) {
       showRecoveryBanner(meta.version);
     } else if (meta.updatedBy) {
       const isMe = meta.updatedBy === sync.getUserId();
-      const who = isMe ? 'You' : `Member ${meta.updatedBy.slice(0, 5)}`;
+      const who = isMe ? 'You' : `User ${meta.updatedBy.slice(0, 5)}`;
       addLog(`State updated to v${meta.version} by ${who}.`);
     }
   });
 
   // ==========================================
-  // 8. Room Presence Subscription (Requirement 4)
+  // 8. Presence & Online Members
   // ==========================================
   sync.onPresenceChange((users) => {
     if (presenceCount) presenceCount.textContent = users.length;
     if (activeRoomMembers) activeRoomMembers.textContent = users.length;
 
-    // Clean up cursors for members who disconnected
+    // Clean up cursors for disconnected members
     const activeSessionIds = new Set(users.map((u) => u.sessionId));
     remoteCursors.forEach((_, sessionId) => {
       if (!activeSessionIds.has(sessionId)) {
@@ -299,7 +672,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (presenceList) {
       presenceList.innerHTML = '';
       if (users.length === 0) {
-        presenceList.innerHTML = '<span class="empty-notice">No active members in room.</span>';
+        presenceList.innerHTML = '<span class="empty-state-text">No members in room yet. Use Invite to share!</span>';
         return;
       }
 
@@ -307,14 +680,14 @@ document.addEventListener('DOMContentLoaded', () => {
         const isMe = u.sessionId === sync.getSessionId();
         const userColor = SyncKit.getUserColor(u.sessionId);
 
-        const pill = document.createElement('div');
-        pill.className = `user-pill ${isMe ? 'user-me' : ''}`;
-        pill.innerHTML = `
-          <span class="member-dot" style="background-color: ${userColor};"></span>
-          <span>${u.displayName || 'Anonymous'}</span>
-          ${isMe ? '<span class="pill pill-info" style="font-size:0.65rem; padding:0.1rem 0.35rem;">You</span>' : ''}
+        const chip = document.createElement('div');
+        chip.className = `member-chip ${isMe ? 'is-me' : ''}`;
+        chip.innerHTML = `
+          <span class="chip-color-dot" style="background-color: ${userColor};"></span>
+          <span>${escapeHtml(u.displayName || 'Anonymous')}</span>
+          ${isMe ? '<span class="pill-mini">You</span>' : ''}
         `;
-        presenceList.appendChild(pill);
+        presenceList.appendChild(chip);
       });
     }
   });
@@ -325,38 +698,56 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // ==========================================
-  // 9. Interactive User Actions
+  // 9. Room Joining & Switching (No Stale Leaks)
   // ==========================================
-
-  // Join Room Functionality (Requirement 1)
   function handleJoinRoom(roomId) {
-    if (!roomId) {
+    const targetRoom = sanitizeRoomId(roomId);
+    if (!targetRoom) {
       addLog('⚠️ Please enter a room name.');
       return;
     }
 
+    // Immediately reset notes and cursors to prevent stale leak from previous room
+    activeEditingNoteId = null;
+    clearTimeout(editDebounceTimer);
+    closeNewNoteForm();
     clearAllCursors();
 
+    if (notesRoomBadge) notesRoomBadge.textContent = targetRoom;
+    if (activeRoomName) activeRoomName.textContent = targetRoom;
+    if (navRoomName) navRoomName.textContent = targetRoom;
+    if (roomInput) roomInput.value = targetRoom;
+    updateBrowserUrl(targetRoom);
+
+    // Visual loading state for notes
+    if (notesCardsList) {
+      notesCardsList.innerHTML = `
+        <div class="notes-empty-card">
+          <span class="empty-icon">⏳</span>
+          <h4 class="empty-title">Loading Room Notes...</h4>
+          <p class="empty-desc">Fetching synchronized notes for <strong>"${targetRoom}"</strong>.</p>
+        </div>
+      `;
+    }
+    setSyncStatus('saving', '◌ Loading notes...');
+
     if (!sync.isConnected()) {
-      addLog(`⏳ Connecting to server to join "${roomId}"...`);
+      addLog(`⏳ Connecting to server to join "${targetRoom}"...`);
       sync.connect();
     }
 
-    sync.joinRoom(roomId, (res) => {
+    sync.joinRoom(targetRoom, (res) => {
       if (res && res.success) {
-        if (roomDetails) roomDetails.style.display = 'flex';
-        if (activeRoomName) activeRoomName.textContent = res.roomId || roomId;
-        if (navRoomName) navRoomName.textContent = res.roomId || roomId;
-        if (navRoomPill) navRoomPill.style.display = 'inline-flex';
+        if (roomDetails) roomDetails.style.display = 'block';
         if (roomStatusBadge) {
-          roomStatusBadge.className = 'pill pill-success';
-          roomStatusBadge.textContent = `Joined ${res.roomId || roomId}`;
+          roomStatusBadge.textContent = `Joined ${targetRoom}`;
         }
         if (activeRoomMembers) activeRoomMembers.textContent = res.presence?.length || 1;
         if (res.state) renderState(res.state);
-        addLog(`✅ Successfully joined room "${roomId}". Authoritative state synchronized.`);
+        addLog(`✅ Joined room "${targetRoom}". Authoritative state & notes synchronized.`);
       } else if (res && res.error) {
-        addLog(`❌ Failed to join room "${roomId}": ${res.error}`);
+        addLog(`❌ Failed to join room "${targetRoom}": ${res.error}`);
+        setSyncStatus('offline', '❌ Error');
       }
     });
   }
@@ -373,18 +764,17 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Quick Room Presets
-  chipButtons.forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const targetRoom = btn.getAttribute('data-room');
-      if (targetRoom && roomInput) {
-        roomInput.value = targetRoom;
-        handleJoinRoom(targetRoom);
+  // Quick Room Chips
+  roomChips.forEach((chip) => {
+    chip.addEventListener('click', () => {
+      const target = chip.getAttribute('data-room');
+      if (target) {
+        handleJoinRoom(target);
       }
     });
   });
 
-  // Update Display Name
+  // Display Name Update
   if (updateNameBtn && displayNameInput) {
     const handleUpdateName = () => {
       const newName = displayNameInput.value.trim();
@@ -400,7 +790,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Counter Actions (Requirement 2)
+  // Counter Actions
   if (incrementBtn) {
     incrementBtn.addEventListener('click', () => {
       const current = sync.getState().count || 0;
@@ -415,46 +805,112 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Shared Note Actions (Requirement 3)
-  let textDebounceTimer = null;
+  // Quick Step Counters (+5, -5, ↺ 0)
+  const stepUpBtn = document.getElementById('step-up-btn');
+  const stepDownBtn = document.getElementById('step-down-btn');
+  const resetCounterBtn = document.getElementById('reset-counter-btn');
 
-  function syncSharedText(val) {
-    if (textSyncIndicator) {
-      textSyncIndicator.className = 'pill pill-info';
-      textSyncIndicator.textContent = 'Syncing...';
+  if (stepUpBtn) {
+    stepUpBtn.addEventListener('click', () => {
+      const current = sync.getState().count || 0;
+      sync.updateState({ count: current + 5 });
+    });
+  }
+
+  if (stepDownBtn) {
+    stepDownBtn.addEventListener('click', () => {
+      const current = sync.getState().count || 0;
+      sync.updateState({ count: current - 5 });
+    });
+  }
+
+  if (resetCounterBtn) {
+    resetCounterBtn.addEventListener('click', () => {
+      sync.updateState({ count: 0 });
+    });
+  }
+
+  // ==========================================
+  // Live Room Reactions & Pop-Up Floating Animation (~1s)
+  // ==========================================
+  const floatingReactionsStage = document.getElementById('floating-reactions-stage');
+
+  function triggerReactionAnimation(emoji, senderName = 'You', sourceElement = null) {
+    if (!floatingReactionsStage) return;
+
+    const bubble = document.createElement('div');
+    bubble.className = 'floating-reaction-bubble';
+
+    // Slight random horizontal offset & rotation so multiple rapid reactions don't overlap
+    const xOffset = Math.floor(Math.random() * 80) - 40; // -40px to +40px
+    const rotation = Math.floor(Math.random() * 24) - 12; // -12deg to +12deg
+
+    let startLeft = '50%';
+    let startTop = '35%';
+
+    if (sourceElement) {
+      const stageRect = floatingReactionsStage.getBoundingClientRect();
+      const btnRect = sourceElement.getBoundingClientRect();
+      if (stageRect.width > 0) {
+        const relLeft = btnRect.left - stageRect.left + (btnRect.width / 2);
+        startLeft = `${Math.max(30, Math.min(stageRect.width - 30, relLeft))}px`;
+      }
     }
-    sync.updateState({ text: val }, (res) => {
-      if (textSyncIndicator) {
-        textSyncIndicator.className = 'pill pill-success';
-        textSyncIndicator.textContent = 'Synced';
+
+    bubble.style.left = startLeft;
+    bubble.style.top = startTop;
+    bubble.style.setProperty('--x-offset', `${xOffset}px`);
+    bubble.style.setProperty('--rot', `${rotation}deg`);
+
+    bubble.innerHTML = `
+      <span class="floating-reaction-emoji">${emoji}</span>
+      <span class="floating-reaction-badge">${escapeHtml(senderName)}</span>
+    `;
+
+    floatingReactionsStage.appendChild(bubble);
+
+    // Remove element after ~1 second (1000ms) to avoid DOM clutter
+    setTimeout(() => {
+      if (bubble.parentNode) {
+        bubble.parentNode.removeChild(bubble);
       }
-    });
+    }, 1000);
   }
 
-  if (sharedTextArea) {
-    sharedTextArea.addEventListener('input', (e) => {
-      const val = e.target.value;
-      if (sharedTextInput) sharedTextInput.value = val;
+  // Clickable reaction buttons near shared counters
+  const reactionTriggerBtns = document.querySelectorAll('.reaction-trigger-btn');
+  reactionTriggerBtns.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const emoji = btn.getAttribute('data-emoji') || '❤️';
+      const name = btn.getAttribute('data-name') || 'Reaction';
 
-      if (textSyncIndicator) {
-        textSyncIndicator.className = 'pill pill-muted';
-        textSyncIndicator.textContent = 'Typing...';
-      }
+      // 1. Show immediate local floating pop-up animation
+      triggerReactionAnimation(emoji, 'You', btn);
 
-      // Smooth debounced sync (~300ms of inactivity triggers real-time broadcast)
-      clearTimeout(textDebounceTimer);
-      textDebounceTimer = setTimeout(() => {
-        syncSharedText(val);
-      }, 300);
+      // 2. Broadcast ephemeral reaction to other members in the room
+      sync.sendReaction(emoji);
+      addLog(`${emoji} You reacted with ${name}!`);
     });
-  }
+  });
 
-  if (updateTextBtn && sharedTextArea) {
-    updateTextBtn.addEventListener('click', () => {
-      clearTimeout(textDebounceTimer);
-      syncSharedText(sharedTextArea.value);
+  // Subscribe to real-time reactions from other room members
+  sync.onReaction(({ emoji, displayName }) => {
+    const who = displayName || 'Member';
+    triggerReactionAnimation(emoji, who);
+    addLog(`${emoji} ${who} reacted with ${emoji}!`);
+  });
+
+  // Interactive Reaction Cards (legacy support)
+  reactionCards.forEach((card) => {
+    card.addEventListener('click', () => {
+      const emoji = card.getAttribute('data-emoji') || '✨';
+      triggerReactionAnimation(emoji, 'You');
+      sync.sendReaction(emoji);
+      addLog(`${emoji} Reaction stamped by you in ${sync.getRoom() || 'room'}!`);
+      card.style.transform = 'scale(0.95)';
+      setTimeout(() => { card.style.transform = ''; }, 150);
     });
-  }
+  });
 
   // Manual Fetch State on Demand
   if (refreshStateBtn) {
@@ -467,4 +923,95 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     });
   }
+
+  // ==========================================
+  // 10. Shareable Invite Modal & Link
+  // ==========================================
+  function showToast(message) {
+    if (!inviteToast) return;
+    if (toastMessage) toastMessage.textContent = message;
+    inviteToast.style.display = 'flex';
+    setTimeout(() => {
+      if (inviteToast) inviteToast.style.display = 'none';
+    }, 3500);
+  }
+
+  function openInviteModal() {
+    const currentRoom = sync.getRoom() || roomInput.value.trim() || 'room-1';
+    const inviteUrl = getFullInviteUrl(currentRoom);
+
+    if (inviteLinkInput) inviteLinkInput.value = inviteUrl;
+    if (copyBtnText) copyBtnText.textContent = 'Copy Link';
+    if (copyBtnIcon) copyBtnIcon.textContent = '📋';
+    if (copyInviteBtn) copyInviteBtn.classList.remove('copied');
+
+    if (inviteModal) inviteModal.style.display = 'flex';
+  }
+
+  function closeInviteModal() {
+    if (inviteModal) inviteModal.style.display = 'none';
+  }
+
+  if (inviteBtn) {
+    inviteBtn.addEventListener('click', openInviteModal);
+  }
+
+  if (closeInviteBtn) {
+    closeInviteBtn.addEventListener('click', closeInviteModal);
+  }
+
+  if (inviteModal) {
+    inviteModal.addEventListener('click', (e) => {
+      if (e.target === inviteModal) closeInviteModal();
+    });
+  }
+
+  // Copy Invite Link with graceful fallback
+  if (copyInviteBtn) {
+    copyInviteBtn.addEventListener('click', async () => {
+      const currentRoom = sync.getRoom() || roomInput.value.trim() || 'room-1';
+      const linkToCopy = getFullInviteUrl(currentRoom);
+
+      let copySuccess = false;
+
+      // 1. Modern Clipboard API
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        try {
+          await navigator.clipboard.writeText(linkToCopy);
+          copySuccess = true;
+        } catch (err) {
+          console.warn('[SyncKit] navigator.clipboard error, trying fallback:', err);
+        }
+      }
+
+      // 2. Fallback to select & execCommand
+      if (!copySuccess && inviteLinkInput) {
+        try {
+          inviteLinkInput.select();
+          inviteLinkInput.setSelectionRange(0, 99999);
+          copySuccess = document.execCommand('copy');
+        } catch (err) {
+          console.error('[SyncKit] Clipboard execCommand error:', err);
+        }
+      }
+
+      if (copySuccess) {
+        if (copyBtnText) copyBtnText.textContent = 'Copied!';
+        if (copyBtnIcon) copyBtnIcon.textContent = '✓';
+        copyInviteBtn.classList.add('copied');
+        showToast(`Invite link copied! Share with collaborators for room "${currentRoom}".`);
+
+        setTimeout(() => {
+          if (copyBtnText) copyBtnText.textContent = 'Copy Link';
+          if (copyBtnIcon) copyBtnIcon.textContent = '📋';
+          copyInviteBtn.classList.remove('copied');
+        }, 2500);
+      } else {
+        showToast('Please press Ctrl+C to copy the link.');
+      }
+    });
+  }
+
+  // Auto-join initial room specified in URL or default
+  handleJoinRoom(initialRoom);
 });

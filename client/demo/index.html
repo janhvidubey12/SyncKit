@@ -3,287 +3,397 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SyncKit - Multiplayer Demo</title>
+  <title>SyncKit - Real-Time Collaborative Workspace</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <div class="app-layout">
+  <div class="workspace-app">
     <!-- Top Navigation Bar -->
-    <header class="navbar">
-      <div class="nav-brand">
-        <span class="brand-badge">SyncKit</span>
-        <div class="brand-title-group">
-          <h1>⚡ SyncKit</h1>
-          <span class="brand-sub">Multiplayer Engine</span>
+    <header class="top-navbar">
+      <div class="nav-left">
+        <div class="brand-group">
+          <div class="brand-logo">
+            <span class="logo-bolt">⚡</span>
+          </div>
+          <div class="brand-text">
+            <div class="brand-title">SyncKit</div>
+            <div class="brand-tagline">Real-Time Workspace</div>
+          </div>
+        </div>
+
+        <!-- Room Switcher in Top Bar -->
+        <div class="nav-room-control">
+          <span class="room-icon">🏠</span>
+          <span class="room-label">Room:</span>
+          <div class="room-input-pill">
+            <input type="text" id="room-input" placeholder="room-name" value="room-1" autocomplete="off" />
+            <button id="join-btn" class="nav-join-btn" title="Join or switch room">Join</button>
+          </div>
+          <!-- Quick Room Chips -->
+          <div class="quick-room-chips">
+            <button class="room-chip" data-room="room-1"># room-1</button>
+            <button class="room-chip" data-room="design-collab"># design-collab</button>
+            <button class="room-chip" data-room="hackathon-hub"># hackathon-hub</button>
+          </div>
         </div>
       </div>
 
-      <div class="nav-controls">
-        <!-- User Profile Quick Chip -->
-        <div class="user-chip">
-          <span class="user-avatar-dot" id="my-color-dot"></span>
-          <span id="client-id" class="user-chip-name">Connecting...</span>
+      <div class="nav-right">
+        <!-- Room Status Badge (Hidden helper for legacy tests) -->
+        <span id="room-status-badge" style="display: none;">room-1</span>
+        <span id="nav-room-pill" style="display: none;"><span id="nav-room-name">room-1</span></span>
+
+        <!-- Presence Counter Pill -->
+        <div class="nav-pill presence-pill" title="Active collaborators in this room">
+          <span class="presence-dot"></span>
+          <span id="presence-count">0</span> online
         </div>
 
-        <!-- Global Room Badge -->
-        <div class="status-pill room-pill" id="nav-room-pill" style="display: none;">
-          <span class="room-dot"></span>
-          <span id="nav-room-name">room-1</span>
-        </div>
-
-        <!-- Connection Status Indicator (Requirement 6 & 7) -->
-        <div class="status-pill" id="connection-pill">
+        <!-- Connection Status Pill -->
+        <div class="nav-pill status-pill" id="connection-status-pill">
           <span id="status-dot" class="dot disconnected"></span>
           <span id="status-text">Disconnected</span>
         </div>
 
-        <!-- Disconnect / Reconnect Button (Test Tool) -->
-        <button id="toggle-connection-btn" class="btn btn-sm btn-outline">🔌 Disconnect Tab</button>
+        <!-- User Identity Chip -->
+        <div class="user-profile-chip" title="Your Session Identity">
+          <span class="avatar-dot" id="my-color-dot"></span>
+          <span id="client-id" class="user-name">Connecting...</span>
+        </div>
+
+        <!-- Shareable Invite Button -->
+        <button id="invite-btn" class="btn btn-invite" title="Generate shareable room invite link">
+          <span class="btn-icon">🔗</span>
+          <span>Invite</span>
+        </button>
+
+        <!-- Test Disconnect/Reconnect Button -->
+        <button id="toggle-connection-btn" class="btn btn-sm btn-outline" title="Toggle disconnect to test state recovery">
+          🔌 Disconnect Tab
+        </button>
       </div>
     </header>
 
     <!-- Global Notice Banners -->
-    <!-- Reconnecting Banner (Requirement 7) -->
+    <!-- Reconnecting Banner -->
     <div id="reconnecting-banner" class="banner banner-warning" style="display: none;">
-      <div class="banner-content">
+      <div class="banner-body">
         <span class="banner-spinner"></span>
-        <span><strong>Connection Lost:</strong> SyncKit is attempting automatic reconnection (<span id="reconnect-attempt-count">1</span>)...</span>
-      </div>
-    </div>
-
-    <!-- State Recovery Banner (Requirement 8) -->
-    <div id="recovery-banner" class="banner banner-success" style="display: none;">
-      <div class="banner-content">
-        <span class="banner-icon">🔄</span>
         <span>
-          <strong>State Recovered!</strong> Authoritative room state (<code id="recovery-version-text">v1</code>) was successfully synchronized from the server after reconnection.
+          <strong>Connection Dropped:</strong> SyncKit is reconnecting to server in background (Attempt <span id="reconnect-attempt-count">1</span>)...
         </span>
       </div>
-      <button id="dismiss-recovery-btn" class="btn-icon" title="Dismiss">✕</button>
     </div>
 
-    <!-- Main Dashboard Container -->
-    <main class="dashboard-container">
-      <!-- Left Column: Interactive Multiplayer Controls -->
-      <div class="dashboard-col">
-        <!-- 1. Room Name & Join Control (Requirement 1) -->
-        <section class="card room-card">
-          <div class="card-header">
-            <div class="card-title-group">
-              <span class="card-icon">🏠</span>
-              <div>
-                <h2>Room Connection</h2>
-                <p class="card-subtitle">Join an isolated multiplayer room</p>
-              </div>
-            </div>
-            <span class="pill pill-muted" id="room-status-badge">Not in room</span>
-          </div>
+    <!-- State Recovery Notification Banner -->
+    <div id="recovery-banner" class="banner banner-success" style="display: none;">
+      <div class="banner-body">
+        <span class="recovery-icon">🔄</span>
+        <span>
+          <strong>State Recovered!</strong> Authoritative room state (<code id="recovery-version-text">v1</code>) and all room notes were successfully restored from the server after reconnection.
+        </span>
+      </div>
+      <button id="dismiss-recovery-btn" class="btn-dismiss" title="Dismiss notice">✕</button>
+    </div>
 
-          <div class="room-join-group">
-            <div class="input-with-button">
-              <input type="text" id="room-input" placeholder="Enter room name..." value="room-1" autocomplete="off" />
-              <button id="join-btn" class="btn btn-primary">Join Room</button>
-            </div>
-            
-            <div class="quick-rooms">
-              <span class="quick-label">Quick switch:</span>
-              <button class="chip-btn" data-room="room-1">room-1</button>
-              <button class="chip-btn" data-room="hackathon-alpha">hackathon-alpha</button>
-              <button class="chip-btn" data-room="collab-hub">collab-hub</button>
+    <!-- Main Workspace Split Pane -->
+    <main class="main-workspace">
+      <!-- ==========================================
+           LEFT PANEL: Shared Room Notes for Every Member
+           ========================================== -->
+      <aside class="panel notes-panel">
+        <div class="panel-header">
+          <div class="panel-title-group">
+            <span class="panel-icon">📝</span>
+            <div>
+              <h2 class="panel-title">Room Notes</h2>
+              <div class="panel-sub">Shared among members in <span id="notes-room-badge" class="room-sub-badge">room-1</span></div>
             </div>
           </div>
-        </section>
-
-        <!-- Room Details & Interactive Controls (Revealed upon joining) -->
-        <div id="room-details" style="display: none;" class="room-active-wrapper">
-          <!-- 2. Shared Counter (Requirement 2) -->
-          <section class="card counter-card">
-            <div class="card-header">
-              <div class="card-title-group">
-                <span class="card-icon">⚡</span>
-                <div>
-                  <h2>Shared Counter</h2>
-                  <p class="card-subtitle">Real-time room-synchronized integer</p>
-                </div>
-              </div>
-              <span class="pill pill-info">v<span id="counter-version-val">1</span></span>
-            </div>
-
-            <div class="counter-display-wrapper">
-              <button id="decrement-btn" class="counter-btn minus-btn" title="Decrement">
-                <span>−</span>
-              </button>
-              <div class="counter-value-container">
-                <span id="counter-val" class="counter-number">0</span>
-                <span class="counter-caption">Room Authoritative Value</span>
-              </div>
-              <button id="increment-btn" class="counter-btn plus-btn" title="Increment">
-                <span>+</span>
-              </button>
-            </div>
-          </section>
-
-          <!-- 3. Shared Text Area / Note (Requirement 3) -->
-          <section class="card note-card">
-            <div class="card-header">
-              <div class="card-title-group">
-                <span class="card-icon">📝</span>
-                <div>
-                  <h2>Shared Room Note</h2>
-                  <p class="card-subtitle">Collaborative shared message synchronized in real time</p>
-                </div>
-              </div>
-              <span id="text-sync-indicator" class="pill pill-success">Synced</span>
-            </div>
-
-            <div class="note-editor-wrapper">
-              <textarea id="shared-text-area" class="shared-textarea" placeholder="Type a message or notes to sync with all users in this room..." rows="4"></textarea>
-              <!-- Hidden input for backwards-compatibility with existing tests -->
-              <input type="hidden" id="shared-text-input" />
-              
-              <div class="note-footer">
-                <span id="note-meta-text" class="text-meta">Synced with room state</span>
-                <button id="update-text-btn" class="btn btn-sm btn-primary">Sync Note Now</button>
-              </div>
-            </div>
-          </section>
-
-          <!-- 5. Live Cursor Playground (Requirement 5) -->
-          <section class="card cursor-card">
-            <div class="card-header">
-              <div class="card-title-group">
-                <span class="card-icon">🖱️</span>
-                <div>
-                  <h2>Live Cursors</h2>
-                  <p class="card-subtitle">Real-time mouse pointer tracking</p>
-                </div>
-              </div>
-              <span class="pill pill-success">Streaming</span>
-            </div>
-
-            <div class="cursor-playground" id="cursor-playground">
-              <div class="playground-inner">
-                <span class="playground-icon">🎯</span>
-                <p class="playground-title">Live Cursor Zone</p>
-                <p class="playground-desc">
-                  Move your mouse across this area or the entire page. Your pointer and display name stream automatically to other tabs in this room!
-                </p>
-                <div class="cursor-coords-pill">
-                  Local cursor: <code id="local-cursor-coords">X: 0, Y: 0</code>
-                </div>
-              </div>
-            </div>
-          </section>
+          <div class="notes-header-actions">
+            <!-- Sync Indicator -->
+            <span id="text-sync-indicator" class="sync-badge synced">● Synced</span>
+          </div>
         </div>
-      </div>
 
-      <!-- Right Column: Presence, State Inspector & Diagnostics -->
-      <div class="dashboard-col">
-        <!-- 4. Room Presence (Requirement 4) -->
-        <section class="card presence-card">
-          <div class="card-header">
-            <div class="card-title-group">
-              <span class="card-icon">👥</span>
-              <div>
-                <h2>Active Members</h2>
-                <p class="card-subtitle">Real-time online presence in this room</p>
+        <!-- Notes Top Toolbar with "+ Create Note" button -->
+        <div class="notes-top-toolbar">
+          <button id="open-create-note-btn" class="btn btn-sm btn-primary">
+            <span class="btn-icon">＋</span>
+            <span>Create Note</span>
+          </button>
+          <div class="notes-stats-row">
+            <span id="notes-count-badge" class="badge-subtle">0 notes</span>
+            <span class="collaborative-notice-tag" title="Notes are visible and collaborative for all members in this room">🌐 Room Shared</span>
+          </div>
+        </div>
+
+        <!-- Inline Note Composer Form -->
+        <div id="new-note-form" class="new-note-card" style="display: none;">
+          <div class="new-note-header">
+            <span class="form-title">✏️ New Note for Room</span>
+            <button id="cancel-create-note-btn" class="btn-icon-close" title="Close">✕</button>
+          </div>
+          <input
+            type="text"
+            id="new-note-title"
+            class="note-input-title"
+            placeholder="Note title (optional)..."
+            maxlength="80"
+          />
+          <textarea
+            id="new-note-content"
+            class="note-textarea-content"
+            placeholder="Write note here... Changes sync instantly to all members in this room."
+            rows="4"
+          ></textarea>
+          <div class="new-note-actions">
+            <button id="cancel-note-btn" class="btn btn-xs btn-outline">Cancel</button>
+            <button id="save-note-btn" class="btn btn-xs btn-primary">Post Note</button>
+          </div>
+        </div>
+
+        <!-- Notes Cards List Container (Shared across all members) -->
+        <div id="notes-cards-list" class="notes-cards-container">
+          <!-- Empty State -->
+          <div id="notes-empty-state" class="notes-empty-card">
+            <span class="empty-icon">📋</span>
+            <h4 class="empty-title">No Notes in This Room</h4>
+            <p class="empty-desc">Click <strong>"Create Note"</strong> above to share a note with all members in this room in real time.</p>
+          </div>
+        </div>
+
+        <!-- Hidden elements for backwards compatibility with tests & legacy queries -->
+        <textarea id="shared-text-area" style="display: none;"></textarea>
+        <input type="hidden" id="shared-text-input" />
+        <button id="update-text-btn" style="display: none;"></button>
+        <span id="note-meta-text" style="display: none;"></span>
+        <span id="notes-word-count" style="display: none;"></span>
+
+        <!-- Room Member Presence List -->
+        <div class="room-members-box">
+          <div class="members-header">
+            <span class="members-title">👥 Active Room Members</span>
+            <span id="active-room-members" class="pill-mini">0</span>
+          </div>
+
+          <div class="display-name-edit">
+            <input type="text" id="display-name-input" placeholder="Your name..." maxlength="30" />
+            <button id="update-name-btn" class="btn btn-xs btn-secondary">Update</button>
+          </div>
+
+          <div id="presence-list" class="presence-chips-container">
+            <span class="empty-state-text">No other members in room yet. Use Invite to share!</span>
+          </div>
+        </div>
+
+        <!-- Note Storage Limitation Notice -->
+        <div class="storage-notice">
+          <span class="notice-icon">⚠️</span>
+          <span>Notes are held authoritatively in-memory per room. Notes persist across browser reloads while active, and reset when the server restarts.</span>
+        </div>
+      </aside>
+
+      <!-- ==========================================
+           RIGHT PANEL: Large Live Collaboration / Cursor Area
+           ========================================== -->
+      <section class="panel collab-panel">
+        <div class="panel-header">
+          <div class="panel-title-group">
+            <span class="panel-icon">🖱️</span>
+            <div>
+              <h2 class="panel-title">Live Collaboration Board</h2>
+              <div class="panel-sub">Real-time cursor presence & interactive widgets</div>
+            </div>
+          </div>
+
+          <div class="collab-header-actions">
+            <div class="cursor-coords-badge">
+              <span class="coords-icon">🎯</span>
+              <span id="local-cursor-coords">Cursor: X: 0, Y: 0</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Collaborative Surface / Whiteboard Area with Dot Grid -->
+        <div class="collab-surface" id="collab-board">
+          <!-- Remote Cursor Indicators Container -->
+          <div id="remote-cursors-layer" class="remote-cursors-layer"></div>
+
+          <!-- Board Widgets Grid -->
+          <div class="board-widgets-container">
+            <!-- Compact Counters & Live Reactions Card (~40% smaller, space-efficient) -->
+            <div class="board-card compact-counters-card">
+              <div class="widget-header">
+                <span class="widget-icon">⚡</span>
+                <span class="widget-title">Shared Room Counters</span>
+                <span class="widget-badge">v<span id="counter-version-val">1</span></span>
+              </div>
+              <p class="widget-desc">Real-time synchronized counters & instant room reactions</p>
+
+              <!-- Space-efficient Multiple Counters Grid -->
+              <div class="counters-grid">
+                <!-- Counter 1: Primary Counter -->
+                <div class="mini-counter-box">
+                  <span class="mini-counter-tag">Room Count</span>
+                  <div class="mini-counter-controls">
+                    <button id="decrement-btn" class="mini-circle-btn minus" title="Decrement count (−1)" aria-label="Decrement count">
+                      <span>−</span>
+                    </button>
+                    <div class="mini-counter-display">
+                      <span id="counter-val" class="compact-counter-val">0</span>
+                    </div>
+                    <button id="increment-btn" class="mini-circle-btn plus" title="Increment count (+1)" aria-label="Increment count">
+                      <span>+</span>
+                    </button>
+                  </div>
+                </div>
+
+                <!-- Counter 2: Quick Step Actions -->
+                <div class="mini-counter-box">
+                  <span class="mini-counter-tag">Quick Steps</span>
+                  <div class="mini-counter-controls">
+                    <button id="step-down-btn" class="mini-step-btn" title="Subtract 5 (−5)" aria-label="Subtract 5">
+                      <span>−5</span>
+                    </button>
+                    <button id="reset-counter-btn" class="mini-step-btn reset" title="Reset counter to 0" aria-label="Reset count to 0">
+                      <span>↺ 0</span>
+                    </button>
+                    <button id="step-up-btn" class="mini-step-btn" title="Add 5 (+5)" aria-label="Add 5">
+                      <span>+5</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Reactions Section: Clickable reaction buttons near shared counters -->
+              <div class="reactions-strip-container">
+                <div class="reactions-header">
+                  <span class="reactions-label">Live Room Reactions</span>
+                  <span class="reactions-sub">Click to react with room members</span>
+                </div>
+
+                <div class="reactions-bar" role="toolbar" aria-label="Room Reactions">
+                  <button class="reaction-trigger-btn" data-emoji="❤️" data-name="Love" title="Love (❤️)" aria-label="React with Love">
+                    <span class="reaction-emoji-icon">❤️</span>
+                    <span class="reaction-name-tag">Love</span>
+                  </button>
+                  <button class="reaction-trigger-btn" data-emoji="🔥" data-name="Fire" title="Fire (🔥)" aria-label="React with Fire">
+                    <span class="reaction-emoji-icon">🔥</span>
+                    <span class="reaction-name-tag">Fire</span>
+                  </button>
+                  <button class="reaction-trigger-btn" data-emoji="😂" data-name="Laugh" title="Laugh (😂)" aria-label="React with Laugh">
+                    <span class="reaction-emoji-icon">😂</span>
+                    <span class="reaction-name-tag">Laugh</span>
+                  </button>
+                  <button class="reaction-trigger-btn" data-emoji="👍" data-name="Like" title="Like (👍)" aria-label="React with Like">
+                    <span class="reaction-emoji-icon">👍</span>
+                    <span class="reaction-name-tag">Like</span>
+                  </button>
+                  <button class="reaction-trigger-btn" data-emoji="🎉" data-name="Celebrate" title="Celebrate (🎉)" aria-label="React with Celebrate">
+                    <span class="reaction-emoji-icon">🎉</span>
+                    <span class="reaction-name-tag">Celebrate</span>
+                  </button>
+                  <button class="reaction-trigger-btn" data-emoji="⚡" data-name="Wow" title="Wow (⚡)" aria-label="React with Wow">
+                    <span class="reaction-emoji-icon">⚡</span>
+                    <span class="reaction-name-tag">Wow</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Floating Reactions Stage Container where animations pop up -->
+              <div id="floating-reactions-stage" class="floating-reactions-stage" aria-live="polite"></div>
+            </div>
+
+            <!-- Widget 2: Collaborative Canvas Info -->
+            <div class="board-card cursor-info-widget compact-card">
+              <div class="widget-header">
+                <span class="widget-icon">✨</span>
+                <span class="widget-title">Collaborative Canvas</span>
+                <span class="widget-badge live-pulse">Live</span>
+              </div>
+              <p class="widget-desc">
+                Move your cursor anywhere across this canvas. Remote members see your live pointer with your distinct color and display name.
+              </p>
+              <div class="cursor-legend-row">
+                <span class="legend-item"><span class="legend-swatch red"></span> Red Pointers</span>
+                <span class="legend-item"><span class="legend-swatch crimson"></span> Crimson Pointers</span>
+                <span class="legend-item"><span class="legend-swatch rose"></span> Rose Pointers</span>
               </div>
             </div>
-            <span class="pill pill-primary"><span id="presence-count">0</span> Online</span>
           </div>
 
-          <!-- Display Name Quick Edit -->
-          <div class="display-name-box">
-            <label class="control-label" for="display-name-input">Your Display Name:</label>
-            <div class="input-with-button">
-              <input type="text" id="display-name-input" placeholder="Enter your name..." maxlength="30" />
-              <button id="update-name-btn" class="btn btn-sm btn-secondary">Update Name</button>
-            </div>
-          </div>
-
-          <!-- Online Members List -->
-          <div class="presence-section">
-            <label class="control-label">Members Currently in Room:</label>
-            <div id="presence-list" class="presence-grid">
-              <span class="empty-notice">Join a room to see online members.</span>
-            </div>
-          </div>
-        </section>
-
-        <!-- Authoritative Server State Inspector -->
-        <section class="card state-card">
-          <div class="card-header">
-            <div class="card-title-group">
-              <span class="card-icon">🔍</span>
-              <div>
-                <h2>Server State Inspector</h2>
-                <p class="card-subtitle">Authoritative single source of truth</p>
-              </div>
-            </div>
-            <div class="state-actions">
-              <button id="refresh-state-btn" class="btn-text">🔄 Fetch State</button>
-              <span class="pill pill-info">v<span id="state-version">1</span></span>
-            </div>
-          </div>
-
-          <div class="state-preview-box">
-            <pre><code id="room-state-output">{\n  "status": "Join a room to inspect state"\n}</code></pre>
-          </div>
-
-          <div class="room-meta-row">
-            <div>Current Room: <strong id="active-room-name">-</strong></div>
-            <div>Active Sockets: <span id="active-room-members" class="badge-number">0</span></div>
-            <div>Global Online: <span id="user-count" class="badge-number">0</span></div>
-          </div>
-        </section>
-
-        <!-- Live Activity Log & Status -->
-        <section class="card activity-card">
-          <div class="card-header">
-            <div class="card-title-group">
-              <span class="card-icon">📡</span>
-              <div>
-                <h2>Activity & Feed</h2>
-                <p class="card-subtitle">Real-time room events and status</p>
-              </div>
-            </div>
-            <span class="pill pill-muted">Live</span>
-          </div>
-
-          <div id="room-feed" class="activity-hero">Ready. Join a room to begin.</div>
-          <ul id="activity-log-list" class="activity-log">
-            <li class="log-item"><span class="log-time">Now</span> Page loaded. SyncKit initialized.</li>
-          </ul>
-        </section>
-
-        <!-- Multi-Tab Quick Testing Card -->
-        <section class="card guide-card">
-          <div class="card-header">
-            <div class="card-title-group">
-              <span class="card-icon">🧪</span>
-              <div>
-                <h2>How to Test Multiplayer</h2>
-                <p class="card-subtitle">Experience true real-time synchronization</p>
-              </div>
-            </div>
-          </div>
-
-          <ol class="guide-steps">
-            <li>Open this URL in <strong>two or three side-by-side browser tabs</strong>:
-              <div class="copy-url-box"><code>http://localhost:3000/demo</code></div>
-            </li>
-            <li>In each tab, keep the room name <code>room-1</code> and click <strong>Join Room</strong>.</li>
-            <li>Move your cursor in one tab to watch the colored live pointer glide across the other tabs.</li>
-            <li>Click <strong>+ Increment</strong> or type in the shared note to see instantaneous state sync.</li>
-            <li>Click <strong>🔌 Disconnect Tab</strong> in Tab 2, increment in Tab 1, then reconnect Tab 2 to verify <strong>automatic state recovery</strong>!</li>
-          </ol>
-        </section>
-      </div>
+          <!-- Hidden elements for compatibility with existing tests -->
+          <div id="cursor-playground" style="display: none;"></div>
+          <div id="room-details" style="display: none;"></div>
+        </div>
+      </section>
     </main>
 
-    <footer class="app-footer">
-      <p>SyncKit Real-Time Engine • Built for the 12-Hour Hackathon • Clean Public API</p>
+    <!-- Bottom Status Bar -->
+    <footer class="bottom-bar">
+      <div class="bottom-left">
+        <span class="engine-badge">SyncKit v0.1.0</span>
+        <span class="status-sep">•</span>
+        <span class="state-version-info">Authoritative State: <strong id="state-version">1</strong></span>
+        <span class="status-sep">•</span>
+        <span>Active Room: <strong id="active-room-name">room-1</strong></span>
+        <button id="refresh-state-btn" class="btn-text-muted" title="Refetch state from server">🔄 Refresh</button>
+      </div>
+
+      <div class="bottom-center">
+        <div id="room-feed" class="live-ticker">SyncKit Engine ready. Join or share room to collaborate.</div>
+      </div>
+
+      <div class="bottom-right">
+        <span class="global-users">Global Sockets: <strong id="user-count">0</strong></span>
+        <!-- Hidden elements for test compatibility -->
+        <pre id="room-state-output" style="display: none;">{}</pre>
+        <ul id="activity-log-list" style="display: none;"></ul>
+      </div>
     </footer>
+
+    <!-- ==========================================
+         Shareable Invite Modal
+         ========================================== -->
+    <div id="invite-modal" class="modal-overlay" style="display: none;">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div class="modal-title-group">
+            <span class="modal-icon">🔗</span>
+            <div>
+              <h3 class="modal-title">Invite Collaborators</h3>
+              <p class="modal-subtitle">Share this real-time room with teammates</p>
+            </div>
+          </div>
+          <button id="close-invite-btn" class="btn-close" title="Close">✕</button>
+        </div>
+
+        <div class="modal-body">
+          <label class="modal-label" for="invite-link-input">Shareable Room Link:</label>
+          <div class="invite-input-group">
+            <input type="text" id="invite-link-input" readonly spellcheck="false" />
+            <button id="copy-invite-btn" class="btn btn-primary btn-copy">
+              <span id="copy-btn-icon">📋</span>
+              <span id="copy-btn-text">Copy Link</span>
+            </button>
+          </div>
+
+          <div class="invite-disclaimer">
+            <span class="disclaimer-icon">⚠️</span>
+            <span>
+              <strong>Note:</strong> Anyone with this link can join this real-time room and collaborate immediately. Room names provide isolation, not access-controlled authentication.
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Toast Notification Container -->
+    <div id="invite-toast" class="toast-popup" style="display: none;">
+      <span class="toast-icon">✓</span>
+      <span id="toast-message">Invite link copied to clipboard!</span>
+    </div>
   </div>
 
   <!-- Scripts -->

@@ -10,7 +10,9 @@
     "test:reconnect": "node test-reconnection.js",
     "test:3tabs": "node test-three-tabs-recovery.js",
     "test:presence": "node test-presence-three-tabs.js",
-    "test:cursor": "node test-cursor-three-tabs.js"
+    "test:cursor": "node test-cursor-three-tabs.js",
+    "test:notes": "node test-notes-and-invite.js",
+    "test:reactions": "node test-reactions.js"
   },
 
   "keywords": [

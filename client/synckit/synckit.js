@@ -51,6 +51,7 @@ class SyncKit {
       error: [],
       userJoined: [],
       userLeft: [],
+      reaction: [],
     };
 
     if (this.autoConnect) {
@@ -212,6 +213,9 @@ class SyncKit {
     }
 
     this.socket.emit('update-state', { roomId: this.currentRoom, updates }, (res) => {
+      if (res && res.success && res.state) {
+        this.state = res.state;
+      }
       if (typeof callback === 'function') callback(res);
     });
 
@@ -221,6 +225,155 @@ class SyncKit {
   setState(updates, callback) {
     return this.updateState(updates, callback);
   }
+
+  /**
+   * Get the current room notes (single string)
+   * @returns {string}
+   */
+  getNotes() {
+    if (this.state.notes || this.state.text) {
+      return this.state.notes || this.state.text;
+    }
+    if (Array.isArray(this.state.notesList) && this.state.notesList.length > 0) {
+      return this.state.notesList.map((n) => n.content).join('\n\n');
+    }
+    return '';
+  }
+
+  /**
+   * Get the collection of individual member notes in this room
+   * @returns {Array<Object>}
+   */
+  getNotesList() {
+    return Array.isArray(this.state.notesList) ? [...this.state.notesList] : [];
+  }
+
+  /**
+   * Create a new note belonging to this member in the current room
+   * @param {{ title?: string, content: string }} noteData
+   * @param {Function} [callback]
+   */
+  createNote(noteData, callback) {
+    const title = typeof noteData === 'object' && noteData.title ? String(noteData.title).trim().slice(0, 80) : '';
+    const content = typeof noteData === 'object' ? String(noteData.content || '').slice(0, 15000) : String(noteData || '').slice(0, 15000);
+
+    const newNote = {
+      id: `note_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      authorId: this.sessionId,
+      authorName: this.displayName || 'Member',
+      authorColor: this.getUserColor(),
+      title: title,
+      content: content,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      updatedBy: this.displayName || 'Member',
+    };
+
+    const currentList = Array.isArray(this.state.notesList) ? [...this.state.notesList] : [];
+    const updatedList = [newNote, ...currentList];
+    const serializedNotes = updatedList.map((n) => n.content).join('\n\n');
+
+    return this.updateState({
+      notesList: updatedList,
+      notes: serializedNotes || content,
+      text: serializedNotes || content,
+    }, callback);
+  }
+
+  /**
+   * Edit an existing note in the current room
+   * @param {string} noteId
+   * @param {string|{ title?: string, content?: string }} updates
+   * @param {Function} [callback]
+   */
+  editNote(noteId, updates, callback) {
+    const currentList = Array.isArray(this.state.notesList) ? [...this.state.notesList] : [];
+    const noteIndex = currentList.findIndex((n) => n.id === noteId);
+
+    if (noteIndex === -1) {
+      const err = `Note "${noteId}" not found.`;
+      if (typeof callback === 'function') callback({ success: false, error: err });
+      return this;
+    }
+
+    const existing = currentList[noteIndex];
+    const newContent = typeof updates === 'string'
+      ? updates.slice(0, 15000)
+      : (updates.content !== undefined ? String(updates.content).slice(0, 15000) : existing.content);
+    const newTitle = typeof updates === 'object' && updates.title !== undefined
+      ? String(updates.title).slice(0, 80)
+      : existing.title;
+
+    currentList[noteIndex] = {
+      ...existing,
+      title: newTitle,
+      content: newContent,
+      updatedAt: new Date().toISOString(),
+      updatedBy: this.displayName || 'Member',
+    };
+
+    const serializedNotes = currentList.map((n) => n.content).join('\n\n');
+
+    return this.updateState({
+      notesList: currentList,
+      notes: serializedNotes,
+      text: serializedNotes,
+    }, callback);
+  }
+
+  /**
+   * Delete a note from the current room
+   * @param {string} noteId
+   * @param {Function} [callback]
+   */
+  deleteNote(noteId, callback) {
+    const currentList = Array.isArray(this.state.notesList) ? [...this.state.notesList] : [];
+    const updatedList = currentList.filter((n) => n.id !== noteId);
+    const serializedNotes = updatedList.map((n) => n.content).join('\n\n');
+
+    return this.updateState({
+      notesList: updatedList,
+      notes: serializedNotes,
+      text: serializedNotes,
+    }, callback);
+  }
+
+  /**
+   * Update the current room notes in real time
+   * Synchronizes both `notesList`, `notes`, and `text` for complete backward compatibility.
+   * @param {string} content
+   * @param {Function} [callback]
+   */
+  updateNotes(content, callback) {
+    const currentList = Array.isArray(this.state.notesList) ? [...this.state.notesList] : [];
+    if (currentList.length > 0) {
+      currentList[0] = {
+        ...currentList[0],
+        content: String(content || ''),
+        updatedAt: new Date().toISOString(),
+        updatedBy: this.displayName || 'Member',
+      };
+    } else {
+      currentList.push({
+        id: `note_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        authorId: this.sessionId,
+        authorName: this.displayName || 'Member',
+        authorColor: this.getUserColor(),
+        title: 'Shared Note',
+        content: String(content || ''),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        updatedBy: this.displayName || 'Member',
+      });
+    }
+
+    return this.updateState({
+      notesList: currentList,
+      notes: content,
+      text: content,
+    }, callback);
+  }
+
 
   // ==========================================
   // Public API: Presence & Identity (Requirement 1, 2, 3, 4)
@@ -336,6 +489,21 @@ class SyncKit {
     return this;
   }
 
+  /**
+   * Broadcast an ephemeral reaction to other room members (Requirement 4)
+   * @param {string} emoji
+   */
+  sendReaction(emoji) {
+    if (!this.isConnected() || !this.currentRoom || !emoji) return this;
+    this.socket.emit('send-reaction', {
+      roomId: this.currentRoom,
+      sessionId: this.sessionId,
+      displayName: this.displayName,
+      emoji: String(emoji).slice(0, 10),
+    });
+    return this;
+  }
+
   // ==========================================
   // Public API: Subscriptions / Event Listeners
   // (Avoids duplicate listener entries - Requirement 8)
@@ -386,6 +554,20 @@ class SyncKit {
     }
     return () => {
       this._listeners.cursorMove = this._listeners.cursorMove.filter((cb) => cb !== callback);
+    };
+  }
+
+  /**
+   * Subscribe to ephemeral room reactions from other members (Requirement 4)
+   * @param {Function} callback Receives { emoji, displayName, sessionId, userId, timestamp }
+   */
+  onReaction(callback) {
+    if (typeof callback !== 'function') return () => {};
+    if (!this._listeners.reaction.includes(callback)) {
+      this._listeners.reaction.push(callback);
+    }
+    return () => {
+      this._listeners.reaction = this._listeners.reaction.filter((cb) => cb !== callback);
     };
   }
 
@@ -548,7 +730,12 @@ class SyncKit {
       this._listeners.cursorMove.forEach((cb) => cb(cursorEvent));
     });
 
-    // 6. Errors
+    // 6. Ephemeral Room Reactions (Requirement 4)
+    this.socket.on('reaction-received', (data) => {
+      this._listeners.reaction.forEach((cb) => cb(data));
+    });
+
+    // 7. Errors
     this.socket.on('synckit:error', (err) => {
       this._emitError(err.code || 'SERVER_ERROR', err.message);
     });
