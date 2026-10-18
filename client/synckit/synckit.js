@@ -16,9 +16,13 @@ class SyncKit {
    */
   constructor(options = {}) {
     // 1. Configuration
-    this.serverUrl =
-      options.serverUrl ||
-      (typeof window !== 'undefined' && window.location ? window.location.origin : 'http://localhost:3000');
+    const hasValidOrigin =
+      typeof window !== 'undefined' &&
+      window.location &&
+      window.location.origin &&
+      window.location.origin !== 'null' &&
+      !window.location.origin.startsWith('file:');
+    this.serverUrl = options.serverUrl || (hasValidOrigin ? window.location.origin : 'http://localhost:3000');
     this.autoConnect = options.autoConnect !== false;
 
     // 2. Session Identity & Display Name
@@ -459,14 +463,19 @@ class SyncKit {
   }
 
   clearWhiteboard(callback) {
-    if (!this.isConnected() || !this.currentRoom) return this;
     this.whiteboard = [];
+    if (!this.isConnected() || !this.currentRoom) {
+      if (typeof callback === 'function') callback({ success: true, localOnly: true });
+      return this;
+    }
     this.socket.emit(
       'whiteboard-clear',
       {
         roomId: this.currentRoom,
       },
-      callback
+      (res) => {
+        if (typeof callback === 'function') callback(res);
+      }
     );
     return this;
   }
@@ -787,6 +796,24 @@ class SyncKit {
             authorKey: this.authorKey,
           },
           (res) => {
+            if (res && res.success) {
+              this.state = res.state || {};
+              this.whiteboard = res.whiteboard || [];
+              this.whiteboardVersion = res.whiteboardVersion || 1;
+              this.presenceList = Array.isArray(res.presence)
+                ? res.presence
+                : Object.values(res.presence || {});
+
+              this._emitStateChange(this.state, {
+                version: this.state.version,
+                recovered: Boolean(this.isReconnecting),
+                wasReset: Boolean(res.isNewRoom && this.isReconnecting),
+                roomId: this.currentRoom,
+              });
+              this._emitPresenceChange(this.presenceList);
+              this._startSyncInterval();
+            }
+
             if (this._pendingJoinCallback) {
               const cb = this._pendingJoinCallback;
               this._pendingJoinCallback = null;

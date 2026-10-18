@@ -352,9 +352,17 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  function clearCanvasDisplay() {
+    if (!ctx || !whiteboardCanvas) return;
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, whiteboardCanvas.width, whiteboardCanvas.height);
+    ctx.restore();
+  }
+
   function redrawAllStrokes() {
     if (!ctx) return;
-    ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+    clearCanvasDisplay();
     for (const stroke of allStrokes) {
       drawStroke(stroke);
     }
@@ -460,7 +468,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   sync.onWhiteboardCleared(() => {
     allStrokes = [];
-    if (ctx) ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+    clearCanvasDisplay();
     updateStrokeCount();
     updateUndoButtonState();
     addLog('🗑️ Whiteboard cleared by room member.');
@@ -544,17 +552,49 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   if (clearBoardBtn) {
-    clearBoardBtn.addEventListener('click', () => {
-      if (confirm('Clear the collaborative whiteboard for all members in this room?')) {
+    let clearClickedOnce = false;
+    let clearClickTimer = null;
+
+    clearBoardBtn.addEventListener('click', (e) => {
+      if (e) e.preventDefault();
+
+      let shouldClear = false;
+
+      // First attempt standard browser confirm
+      try {
+        shouldClear = window.confirm('Clear the collaborative whiteboard for all members in this room?');
+      } catch (err) {
+        shouldClear = true;
+      }
+
+      // Resilient fallback: If window.confirm is suppressed by the browser environment,
+      // allow rapid double-click confirmation within 3.5s
+      if (!shouldClear) {
+        if (clearClickedOnce) {
+          shouldClear = true;
+          clearClickedOnce = false;
+          if (clearClickTimer) clearTimeout(clearClickTimer);
+        } else {
+          clearClickedOnce = true;
+          clearClickTimer = setTimeout(() => {
+            clearClickedOnce = false;
+          }, 3500);
+        }
+      }
+
+      if (shouldClear) {
+        clearClickedOnce = false;
+        if (clearClickTimer) clearTimeout(clearClickTimer);
+
+        allStrokes = [];
+        clearCanvasDisplay();
+        updateStrokeCount();
+        updateUndoButtonState();
+        addLog('🗑️ Cleared whiteboard for room.');
+
         sync.clearWhiteboard((res) => {
-          if (res && res.success) {
-            allStrokes = [];
-            if (ctx) ctx.clearRect(0, 0, canvasWidth, canvasHeight);
-            updateStrokeCount();
-            updateUndoButtonState();
-            addLog('🗑️ Cleared whiteboard for room.');
-          } else if (res && res.error) {
-            addLog(`❌ Clear failed: ${res.error}`);
+          if (res && res.error && !res.success) {
+            addLog(`⚠️ Server sync clear notice: ${res.error}`);
           }
         });
       }
@@ -1043,12 +1083,21 @@ document.addEventListener('DOMContentLoaded', () => {
   // ==========================================
   function handleJoinRoom(rawRoomId) {
     hideRoomError();
-    const val = validateRoomId(rawRoomId);
+    const candidate = (typeof rawRoomId === 'string' && rawRoomId.trim())
+      ? rawRoomId.trim()
+      : (roomInput ? roomInput.value.trim() : '');
+    const toValidate = candidate || sync.getRoom() || 'room-1';
+    const val = validateRoomId(toValidate);
     if (!val.valid) {
       showRoomError(val.error);
       return;
     }
     const targetRoom = val.roomId;
+
+    if (joinBtn) {
+      joinBtn.textContent = 'Joining...';
+      joinBtn.disabled = true;
+    }
 
     if (!sync.isConnected()) {
       addLog(`⏳ Connecting to server to join "${targetRoom}"...`);
@@ -1058,11 +1107,16 @@ document.addEventListener('DOMContentLoaded', () => {
     activeEditingNoteId = null;
     closeNewNoteForm();
     clearAllCursors();
-    if (floatingReactionsStage) floatingReactionsStage.innerHTML = '';
-    allStrokes = [];
-    if (ctx) ctx.clearRect(0, 0, canvasWidth, canvasHeight);
-    updateStrokeCount();
-    updateUndoButtonState();
+    const stage = document.getElementById('floating-reactions-stage');
+    if (stage) stage.innerHTML = '';
+
+    const isDifferentRoom = targetRoom !== sync.getRoom();
+    if (isDifferentRoom) {
+      allStrokes = [];
+      clearCanvasDisplay();
+      updateStrokeCount();
+      updateUndoButtonState();
+    }
 
     if (notesRoomBadge) notesRoomBadge.textContent = targetRoom;
     if (activeRoomName) activeRoomName.textContent = targetRoom;
@@ -1071,7 +1125,7 @@ document.addEventListener('DOMContentLoaded', () => {
     updateBrowserUrl(targetRoom);
     updateActiveRoomChips(targetRoom);
 
-    if (notesCardsList) {
+    if (notesCardsList && isDifferentRoom) {
       notesCardsList.innerHTML = `
         <div class="notes-empty-card">
           <span class="empty-icon">⏳</span>
@@ -1085,14 +1139,25 @@ document.addEventListener('DOMContentLoaded', () => {
     let joinFinished = false;
     const joinTimeout = setTimeout(() => {
       if (!joinFinished) {
+        joinFinished = true;
+        if (joinBtn) {
+          joinBtn.textContent = 'Join';
+          joinBtn.disabled = false;
+        }
         showRoomError(`Connection to room "${targetRoom}" timed out. Server is unreachable.`);
         setSyncStatus('offline', '❌ Unreachable');
       }
     }, 6000);
 
     sync.joinRoom(targetRoom, (res) => {
+      if (joinFinished) return;
       joinFinished = true;
       clearTimeout(joinTimeout);
+
+      if (joinBtn) {
+        joinBtn.textContent = 'Join';
+        joinBtn.disabled = false;
+      }
 
       if (res && res.success) {
         hideRoomError();
@@ -1117,8 +1182,10 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   if (joinBtn) {
-    joinBtn.addEventListener('click', () => {
-      handleJoinRoom(roomInput ? roomInput.value : '');
+    joinBtn.addEventListener('click', (e) => {
+      if (e) e.preventDefault();
+      const val = roomInput ? roomInput.value.trim() : '';
+      handleJoinRoom(val || sync.getRoom() || 'room-1');
     });
   }
 
@@ -1129,7 +1196,8 @@ document.addEventListener('DOMContentLoaded', () => {
     roomInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
         e.preventDefault();
-        handleJoinRoom(roomInput.value);
+        const val = roomInput.value.trim();
+        handleJoinRoom(val || sync.getRoom() || 'room-1');
       }
     });
   }
@@ -1194,28 +1262,36 @@ document.addEventListener('DOMContentLoaded', () => {
   // 11. Live Room Reactions (Feature 4)
   // ==========================================
   function triggerReactionAnimation(emoji, senderName = 'You', sourceElement = null) {
-    if (!floatingReactionsStage) return;
+    let stage = document.getElementById('floating-reactions-stage');
+    if (!stage) {
+      stage = document.createElement('div');
+      stage.id = 'floating-reactions-stage';
+      stage.className = 'floating-reactions-stage';
+      document.body.appendChild(stage);
+    }
+
+    const targetBtn = sourceElement || document.querySelector(`.reaction-trigger-btn[data-emoji="${emoji}"]`);
+
+    let startX = window.innerWidth / 2;
+    let startY = 140;
+
+    if (targetBtn && targetBtn.getBoundingClientRect) {
+      const rect = targetBtn.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        startX = rect.left + rect.width / 2;
+        startY = rect.top;
+      }
+    }
 
     const bubble = document.createElement('div');
     bubble.className = 'floating-reaction-bubble';
 
-    const xOffset = Math.floor(Math.random() * 80) - 40;
+    const xOffset = Math.floor(Math.random() * 40) - 20;
     const rotation = Math.floor(Math.random() * 24) - 12;
 
-    let startLeft = '50%';
-    let startTop = '40%';
-
-    if (sourceElement) {
-      const stageRect = floatingReactionsStage.getBoundingClientRect();
-      const btnRect = sourceElement.getBoundingClientRect();
-      if (stageRect.width > 0) {
-        const relLeft = btnRect.left - stageRect.left + btnRect.width / 2;
-        startLeft = `${Math.max(30, Math.min(stageRect.width - 30, relLeft))}px`;
-      }
-    }
-
-    bubble.style.left = startLeft;
-    bubble.style.top = startTop;
+    bubble.style.position = 'fixed';
+    bubble.style.left = `${startX}px`;
+    bubble.style.top = `${startY}px`;
     bubble.style.setProperty('--x-offset', `${xOffset}px`);
     bubble.style.setProperty('--rot', `${rotation}deg`);
 
@@ -1224,18 +1300,19 @@ document.addEventListener('DOMContentLoaded', () => {
       <span class="floating-reaction-badge">${escapeHtml(senderName)}</span>
     `;
 
-    floatingReactionsStage.appendChild(bubble);
+    stage.appendChild(bubble);
 
     setTimeout(() => {
       if (bubble.parentNode) {
         bubble.parentNode.removeChild(bubble);
       }
-    }, 1000);
+    }, 1100);
   }
 
   const reactionTriggerBtns = document.querySelectorAll('.reaction-trigger-btn');
   reactionTriggerBtns.forEach((btn) => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', (e) => {
+      if (e) e.preventDefault();
       const emoji = btn.getAttribute('data-emoji') || '❤️';
       const name = btn.getAttribute('data-name') || 'Reaction';
 

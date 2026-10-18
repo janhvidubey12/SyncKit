@@ -735,21 +735,21 @@ io.on('connection', (socket) => {
   // EVENT: whiteboard-draw
   // Synchronizes freehand drawing strokes across all members in room
   // ----------------------------------------------------
-  socket.on('whiteboard-draw', (payload, callback) => {
+  socket.on('whiteboard-draw', async (payload, callback) => {
     try {
-      const roomId = payload?.roomId || Array.from(socket.currentRooms)[0];
+      const roomId = payload?.roomId || Array.from(socket.currentRooms)[0] || 'room-1';
       const stroke = payload?.stroke;
 
-      if (!roomId || !rooms[roomId] || !rooms[roomId].members.has(socket.id)) {
-        if (typeof callback === 'function') callback({ success: false, error: 'Not in room' });
-        return;
-      }
       if (!stroke || !Array.isArray(stroke.points) || stroke.points.length === 0) {
         if (typeof callback === 'function') callback({ success: false, error: 'Invalid stroke data' });
         return;
       }
 
-      const room = rooms[roomId];
+      const { room } = await ensureRoomLoaded(roomId);
+      room.members.add(socket.id);
+      socket.currentRooms.add(roomId);
+      socket.join(roomId);
+
       const sanitizedStroke = {
         id: String(stroke.id || `stroke_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`),
         authorId: socket.sessionId || socket.id,
@@ -794,12 +794,12 @@ io.on('connection', (socket) => {
   // ----------------------------------------------------
   socket.on('whiteboard-clear', async (payload, callback) => {
     try {
-      const roomId = payload?.roomId || Array.from(socket.currentRooms)[0];
-      if (!roomId || !rooms[roomId] || !rooms[roomId].members.has(socket.id)) {
-        if (typeof callback === 'function') callback({ success: false, error: 'Not in room' });
-        return;
-      }
-      const room = rooms[roomId];
+      const roomId = payload?.roomId || Array.from(socket.currentRooms)[0] || 'room-1';
+      const { room } = await ensureRoomLoaded(roomId);
+      room.members.add(socket.id);
+      socket.currentRooms.add(roomId);
+      socket.join(roomId);
+
       room.whiteboard = [];
       room.whiteboardVersion += 1;
 
@@ -833,12 +833,11 @@ io.on('connection', (socket) => {
   // ----------------------------------------------------
   socket.on('whiteboard-undo', async (payload, callback) => {
     try {
-      const roomId = payload?.roomId || Array.from(socket.currentRooms)[0];
-      if (!roomId || !rooms[roomId] || !rooms[roomId].members.has(socket.id)) {
-        if (typeof callback === 'function') callback({ success: false, error: 'Not in room' });
-        return;
-      }
-      const room = rooms[roomId];
+      const roomId = payload?.roomId || Array.from(socket.currentRooms)[0] || 'room-1';
+      const { room } = await ensureRoomLoaded(roomId);
+      room.members.add(socket.id);
+      socket.currentRooms.add(roomId);
+      socket.join(roomId);
       if (room.whiteboard.length === 0) {
         if (typeof callback === 'function') callback({ success: true, strokes: [], version: room.whiteboardVersion });
         return;

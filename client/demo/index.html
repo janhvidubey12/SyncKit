@@ -316,9 +316,6 @@
           <!-- Remote Cursor Indicators Container -->
           <div id="remote-cursors-layer" class="remote-cursors-layer"></div>
 
-          <!-- Floating Reactions Stage Container where animations pop up -->
-          <div id="floating-reactions-stage" class="floating-reactions-stage" aria-live="polite"></div>
-
           <!-- Hidden elements for compatibility with existing tests -->
           <div id="cursor-playground" style="display: none;"></div>
           <div id="room-details" style="display: none;"></div>
@@ -400,9 +397,22 @@
     </div>
   </div>
 
+  <!-- Floating Reactions Stage: Root Viewport Overlay -->
+  <div id="floating-reactions-stage" class="floating-reactions-stage" aria-live="polite"></div>
+
   <!-- Scripts -->
   <script src="/socket.io/socket.io.js"></script>
+  <script>
+    if (typeof io === 'undefined') {
+      document.write('<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"><\\/script>');
+    }
+  </script>
   <script src="/synckit/synckit.js"></script>
+  <script>
+    if (typeof SyncKit === 'undefined') {
+      document.write('<script src="../synckit/synckit.js"><\\/script>');
+    }
+  </script>
   <script src="demo.js"></script>
 </body>
 </html>
